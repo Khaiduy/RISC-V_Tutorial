@@ -34,8 +34,9 @@ SIM_LDFLAGS = \
 	-ldramsim \
 	$(EXTRA_SIM_LDFLAGS)
 
-CLOCK_PERIOD ?= 1.0
-RESET_DELAY ?= 777.7
+CLOCK_PERIOD ?= 1.0  # 2 GHz (0.5ns period)
+
+RESET_DELAY ?= 777  # ~777 clock cycles at 0.5ns period
 
 SIM_PREPROC_DEFINES = \
 	+define+CLOCK_PERIOD=$(CLOCK_PERIOD) \

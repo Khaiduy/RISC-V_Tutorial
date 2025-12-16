@@ -1,0 +1,301 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<GenRun Id="impl_1" LaunchPart="xc7a35ticsg324-1L" LaunchTime="1762155930">
+  <File Type="ROUTE-RQS-RPT" Name="route_report_qor_suggestions_0.rpt"/>
+  <File Type="POSTROUTE-PHYSOPT-RQS" Name="serRAM_postroute_physopted.rqs"/>
+  <File Type="ROUTE-RQS" Name="serRAM_routed.rqs"/>
+  <File Type="WBT-USG" Name="usage_statistics_webtalk.html"/>
+  <File Type="BG-BGN" Name="serRAM.bgn"/>
+  <File Type="BITSTR-SYSDEF" Name="serRAM.sysdef"/>
+  <File Type="BITSTR-LTX" Name="debug_nets.ltx"/>
+  <File Type="BITSTR-LTX" Name="serRAM.ltx"/>
+  <File Type="RBD_FILE" Name="serRAM.rbd"/>
+  <File Type="NPI_FILE" Name="serRAM.npi"/>
+  <File Type="RNPI_FILE" Name="serRAM.rnpi"/>
+  <File Type="CFI_FILE" Name="serRAM.cfi"/>
+  <File Type="RCFI_FILE" Name="serRAM.rcfi"/>
+  <File Type="PL-PDI-FILE" Name="serRAM_pld.pdi"/>
+  <File Type="BOOT-PDI-FILE" Name="serRAM_boot.pdi"/>
+  <File Type="RDI-RDI" Name="serRAM.vdi"/>
+  <File Type="PDI-FILE" Name="serRAM.pdi"/>
+  <File Type="BITSTR-MMI" Name="serRAM.mmi"/>
+  <File Type="BITSTR-BMM" Name="serRAM_bd.bmm"/>
+  <File Type="BITSTR-NKY" Name="serRAM.nky"/>
+  <File Type="BITSTR-RBT" Name="serRAM.rbt"/>
+  <File Type="BITSTR-MSK" Name="serRAM.msk"/>
+  <File Type="BG-BIN" Name="serRAM.bin"/>
+  <File Type="POSTROUTE-PHYSOPT-RQS-RPT" Name="postroute_physopt_report_qor_suggestions_0.rpt"/>
+  <File Type="BG-BIT" Name="serRAM.bit"/>
+  <File Type="POSTROUTE-PHYSOPT-BUS-SKEW-RPX" Name="serRAM_bus_skew_postroute_physopted.rpx"/>
+  <File Type="POSTROUTE-PHYSOPT-BUS-SKEW-PB" Name="serRAM_bus_skew_postroute_physopted.pb"/>
+  <File Type="POSTROUTE-PHYSOPT-BUS-SKEW" Name="serRAM_bus_skew_postroute_physopted.rpt"/>
+  <File Type="POSTROUTE-PHYSOPT-TIMING-RPX" Name="serRAM_timing_summary_postroute_physopted.rpx"/>
+  <File Type="POSTROUTE-PHYSOPT-TIMING-PB" Name="serRAM_timing_summary_postroute_physopted.pb"/>
+  <File Type="POSTROUTE-PHYSOPT-TIMING" Name="serRAM_timing_summary_postroute_physopted.rpt"/>
+  <File Type="POSTROUTE-PHYSOPT-BLACKBOX-DCP" Name="serRAM_postroute_physopt_bb.dcp"/>
+  <File Type="POSTROUTE-PHYSOPT-DCP" Name="serRAM_postroute_physopt.dcp"/>
+  <File Type="BG-DRC" Name="serRAM.drc"/>
+  <File Type="ROUTE-RQS-PB" Name="serRAM_rqs_routed.pb"/>
+  <File Type="ROUTE-BUS-SKEW-RPX" Name="serRAM_bus_skew_routed.rpx"/>
+  <File Type="ROUTE-BUS-SKEW-PB" Name="serRAM_bus_skew_routed.pb"/>
+  <File Type="ROUTE-BUS-SKEW" Name="serRAM_bus_skew_routed.rpt"/>
+  <File Type="ROUTE-CLK" Name="serRAM_clock_utilization_routed.rpt"/>
+  <File Type="ROUTE-SIMILARITY" Name="serRAM_incremental_reuse_routed.rpt"/>
+  <File Type="ROUTE-TIMING-RPX" Name="serRAM_timing_summary_routed.rpx"/>
+  <File Type="ROUTE-TIMING-PB" Name="serRAM_timing_summary_routed.pb"/>
+  <File Type="ROUTE-TIMINGSUMMARY" Name="serRAM_timing_summary_routed.rpt"/>
+  <File Type="ROUTE-STATUS-PB" Name="serRAM_route_status.pb"/>
+  <File Type="ROUTE-STATUS" Name="serRAM_route_status.rpt"/>
+  <File Type="ROUTE-PWR-RPX" Name="serRAM_power_routed.rpx"/>
+  <File Type="ROUTE-PWR-SUM" Name="serRAM_power_summary_routed.pb"/>
+  <File Type="ROUTE-PWR" Name="serRAM_power_routed.rpt"/>
+  <File Type="ROUTE-METHODOLOGY-DRC-PB" Name="serRAM_methodology_drc_routed.pb"/>
+  <File Type="ROUTE-METHODOLOGY-DRC-RPX" Name="serRAM_methodology_drc_routed.rpx"/>
+  <File Type="ROUTE-METHODOLOGY-DRC" Name="serRAM_methodology_drc_routed.rpt"/>
+  <File Type="ROUTE-DRC-RPX" Name="serRAM_drc_routed.rpx"/>
+  <File Type="ROUTE-DRC-PB" Name="serRAM_drc_routed.pb"/>
+  <File Type="ROUTE-DRC" Name="serRAM_drc_routed.rpt"/>
+  <File Type="ROUTE-BLACKBOX-DCP" Name="serRAM_routed_bb.dcp"/>
+  <File Type="ROUTE-DCP" Name="serRAM_routed.dcp"/>
+  <File Type="ROUTE-ERROR-DCP" Name="serRAM_routed_error.dcp"/>
+  <File Type="PHYSOPT-TIMING" Name="serRAM_timing_summary_physopted.rpt"/>
+  <File Type="PHYSOPT-DRC" Name="serRAM_drc_physopted.rpt"/>
+  <File Type="PHYSOPT-DCP" Name="serRAM_physopt.dcp"/>
+  <File Type="POSTPLACE-PWROPT-TIMING" Name="serRAM_timing_summary_postplace_pwropted.rpt"/>
+  <File Type="POSTPLACE-PWROPT-DCP" Name="serRAM_postplace_pwropt.dcp"/>
+  <File Type="PLACE-RQA-PB" Name="serRAM_rqa_placed.pb"/>
+  <File Type="PLACE-TIMING" Name="serRAM_timing_summary_placed.rpt"/>
+  <File Type="PLACE-PRE-SIMILARITY" Name="serRAM_incremental_reuse_pre_placed.rpt"/>
+  <File Type="PLACE-SIMILARITY" Name="serRAM_incremental_reuse_placed.rpt"/>
+  <File Type="PLACE-CTRL" Name="serRAM_control_sets_placed.rpt"/>
+  <File Type="PLACE-UTIL-PB" Name="serRAM_utilization_placed.pb"/>
+  <File Type="PLACE-UTIL" Name="serRAM_utilization_placed.rpt"/>
+  <File Type="PLACE-CLK" Name="serRAM_clock_utilization_placed.rpt"/>
+  <File Type="PLACE-IO" Name="serRAM_io_placed.rpt"/>
+  <File Type="PLACE-DCP" Name="serRAM_placed.dcp"/>
+  <File Type="PWROPT-TIMING" Name="serRAM_timing_summary_pwropted.rpt"/>
+  <File Type="PWROPT-DRC" Name="serRAM_drc_pwropted.rpt"/>
+  <File Type="PWROPT-DCP" Name="serRAM_pwropt.dcp"/>
+  <File Type="OPT-RQA-PB" Name="serRAM_rqa_opted.pb"/>
+  <File Type="OPT-HWDEF" Name="serRAM.hwdef"/>
+  <File Type="OPT-METHODOLOGY-DRC" Name="serRAM_methodology_drc_opted.rpt"/>
+  <File Type="OPT-DRC" Name="serRAM_drc_opted.rpt"/>
+  <File Type="OPT-DCP" Name="serRAM_opt.dcp"/>
+  <File Type="OPT-TIMING" Name="serRAM_timing_summary_opted.rpt"/>
+  <File Type="REPORTS-TCL" Name="serRAM_reports.tcl"/>
+  <File Type="INIT-TIMING" Name="serRAM_timing_summary_init.rpt"/>
+  <File Type="PA-TCL" Name="serRAM.tcl"/>
+  <FileSet Name="sources" Type="DesignSrcs" RelSrcDir="$PSRCDIR/sources_1" RelGenDir="$PGENDIR/sources_1">
+    <Filter Type="Srcs"/>
+    <File Path="$PSRCDIR/sources_1/ip/clk_wiz_0/clk_wiz_0.xci">
+      <FileInfo>
+        <Attr Name="UsedIn" Val="synthesis"/>
+        <Attr Name="UsedIn" Val="implementation"/>
+        <Attr Name="UsedIn" Val="simulation"/>
+      </FileInfo>
+    </File>
+    <File Path="$PSRCDIR/sources_1/new/SerialRAM.v">
+      <FileInfo>
+        <Attr Name="UsedIn" Val="synthesis"/>
+        <Attr Name="UsedIn" Val="implementation"/>
+        <Attr Name="UsedIn" Val="simulation"/>
+      </FileInfo>
+    </File>
+    <File Path="$PSRCDIR/sources_1/new/chipyard.fpga.arty100t.Arty100TwoDDRHarness.RocketSerRAMArty100TConfig.model.mems.v">
+      <FileInfo>
+        <Attr Name="UsedIn" Val="synthesis"/>
+        <Attr Name="UsedIn" Val="implementation"/>
+        <Attr Name="UsedIn" Val="simulation"/>
+      </FileInfo>
+    </File>
+    <File Path="$PSRCDIR/sources_1/new/clk_div.v">
+      <FileInfo>
+        <Attr Name="UsedIn" Val="synthesis"/>
+        <Attr Name="UsedIn" Val="implementation"/>
+        <Attr Name="UsedIn" Val="simulation"/>
+      </FileInfo>
+    </File>
+    <File Path="$PSRCDIR/sources_1/new/GenericDeserializer_Arty100TwoDDRHarness_UNIQUIFIED.sv">
+      <FileInfo>
+        <Attr Name="UsedIn" Val="synthesis"/>
+        <Attr Name="UsedIn" Val="implementation"/>
+        <Attr Name="UsedIn" Val="simulation"/>
+      </FileInfo>
+    </File>
+    <File Path="$PSRCDIR/sources_1/new/GenericSerializer_Arty100TwoDDRHarness_UNIQUIFIED.sv">
+      <FileInfo>
+        <Attr Name="UsedIn" Val="synthesis"/>
+        <Attr Name="UsedIn" Val="implementation"/>
+        <Attr Name="UsedIn" Val="simulation"/>
+      </FileInfo>
+    </File>
+    <File Path="$PSRCDIR/sources_1/new/HellaPeekingArbiter_Arty100TwoDDRHarness_UNIQUIFIED.sv">
+      <FileInfo>
+        <Attr Name="UsedIn" Val="synthesis"/>
+        <Attr Name="UsedIn" Val="implementation"/>
+        <Attr Name="UsedIn" Val="simulation"/>
+      </FileInfo>
+    </File>
+    <File Path="$PSRCDIR/sources_1/new/Queue_24_Arty100TwoDDRHarness_UNIQUIFIED.sv">
+      <FileInfo>
+        <Attr Name="UsedIn" Val="synthesis"/>
+        <Attr Name="UsedIn" Val="implementation"/>
+        <Attr Name="UsedIn" Val="simulation"/>
+      </FileInfo>
+    </File>
+    <File Path="$PSRCDIR/sources_1/new/Queue_25_Arty100TwoDDRHarness_UNIQUIFIED.sv">
+      <FileInfo>
+        <Attr Name="UsedIn" Val="synthesis"/>
+        <Attr Name="UsedIn" Val="implementation"/>
+        <Attr Name="UsedIn" Val="simulation"/>
+      </FileInfo>
+    </File>
+    <File Path="$PSRCDIR/sources_1/new/Queue_34.sv">
+      <FileInfo>
+        <Attr Name="UsedIn" Val="synthesis"/>
+        <Attr Name="UsedIn" Val="implementation"/>
+        <Attr Name="UsedIn" Val="simulation"/>
+      </FileInfo>
+    </File>
+    <File Path="$PSRCDIR/sources_1/new/Queue_35.sv">
+      <FileInfo>
+        <Attr Name="UsedIn" Val="synthesis"/>
+        <Attr Name="UsedIn" Val="implementation"/>
+        <Attr Name="UsedIn" Val="simulation"/>
+      </FileInfo>
+    </File>
+    <File Path="$PSRCDIR/sources_1/new/Repeater_10.sv">
+      <FileInfo>
+        <Attr Name="UsedIn" Val="synthesis"/>
+        <Attr Name="UsedIn" Val="implementation"/>
+        <Attr Name="UsedIn" Val="simulation"/>
+      </FileInfo>
+    </File>
+    <File Path="$PSRCDIR/sources_1/new/TLBuffer_18.sv">
+      <FileInfo>
+        <Attr Name="UsedIn" Val="synthesis"/>
+        <Attr Name="UsedIn" Val="implementation"/>
+        <Attr Name="UsedIn" Val="simulation"/>
+      </FileInfo>
+    </File>
+    <File Path="$PSRCDIR/sources_1/new/TLBuffer_19.sv">
+      <FileInfo>
+        <Attr Name="UsedIn" Val="synthesis"/>
+        <Attr Name="UsedIn" Val="implementation"/>
+        <Attr Name="UsedIn" Val="simulation"/>
+      </FileInfo>
+    </File>
+    <File Path="$PSRCDIR/sources_1/new/TLFragmenter_11.sv">
+      <FileInfo>
+        <Attr Name="UsedIn" Val="synthesis"/>
+        <Attr Name="UsedIn" Val="implementation"/>
+        <Attr Name="UsedIn" Val="simulation"/>
+      </FileInfo>
+    </File>
+    <File Path="$PSRCDIR/sources_1/new/TLRAM_1.sv">
+      <FileInfo>
+        <Attr Name="UsedIn" Val="synthesis"/>
+        <Attr Name="UsedIn" Val="implementation"/>
+        <Attr Name="UsedIn" Val="simulation"/>
+      </FileInfo>
+    </File>
+    <File Path="$PSRCDIR/sources_1/new/TLSerdesser_1.sv">
+      <FileInfo>
+        <Attr Name="UsedIn" Val="synthesis"/>
+        <Attr Name="UsedIn" Val="implementation"/>
+        <Attr Name="UsedIn" Val="simulation"/>
+      </FileInfo>
+    </File>
+    <File Path="$PSRCDIR/sources_1/new/TSIToTileLink.sv">
+      <FileInfo>
+        <Attr Name="UsedIn" Val="synthesis"/>
+        <Attr Name="UsedIn" Val="implementation"/>
+        <Attr Name="UsedIn" Val="simulation"/>
+      </FileInfo>
+    </File>
+    <File Path="$PSRCDIR/sources_1/new/mem_0.sv">
+      <FileInfo>
+        <Attr Name="UsedIn" Val="synthesis"/>
+        <Attr Name="UsedIn" Val="implementation"/>
+        <Attr Name="UsedIn" Val="simulation"/>
+      </FileInfo>
+    </File>
+    <File Path="$PSRCDIR/sources_1/new/ram_combMem_14_Arty100TwoDDRHarness_UNIQUIFIED.sv">
+      <FileInfo>
+        <Attr Name="UsedIn" Val="synthesis"/>
+        <Attr Name="UsedIn" Val="implementation"/>
+        <Attr Name="UsedIn" Val="simulation"/>
+      </FileInfo>
+    </File>
+    <File Path="$PSRCDIR/sources_1/new/ram_combMem_19.sv">
+      <FileInfo>
+        <Attr Name="UsedIn" Val="synthesis"/>
+        <Attr Name="UsedIn" Val="implementation"/>
+        <Attr Name="UsedIn" Val="simulation"/>
+      </FileInfo>
+    </File>
+    <File Path="$PSRCDIR/sources_1/new/ram_combMem_3_Arty100TwoDDRHarness_UNIQUIFIED.sv">
+      <FileInfo>
+        <Attr Name="UsedIn" Val="synthesis"/>
+        <Attr Name="UsedIn" Val="implementation"/>
+        <Attr Name="UsedIn" Val="simulation"/>
+      </FileInfo>
+    </File>
+    <File Path="$PSRCDIR/sources_1/new/ram_combMem_8.sv">
+      <FileInfo>
+        <Attr Name="UsedIn" Val="synthesis"/>
+        <Attr Name="UsedIn" Val="implementation"/>
+        <Attr Name="UsedIn" Val="simulation"/>
+      </FileInfo>
+    </File>
+    <File Path="$PSRCDIR/sources_1/new/serRAM.v">
+      <FileInfo>
+        <Attr Name="UsedIn" Val="synthesis"/>
+        <Attr Name="UsedIn" Val="implementation"/>
+        <Attr Name="UsedIn" Val="simulation"/>
+      </FileInfo>
+    </File>
+    <Config>
+      <Option Name="DesignMode" Val="RTL"/>
+      <Option Name="TopModule" Val="serRAM"/>
+      <Option Name="TopAutoSet" Val="TRUE"/>
+    </Config>
+  </FileSet>
+  <FileSet Name="constrs_in" Type="Constrs" RelSrcDir="$PSRCDIR/constrs_1" RelGenDir="$PGENDIR/constrs_1">
+    <Filter Type="Constrs"/>
+    <File Path="$PPRDIR/arty-master.xdc">
+      <FileInfo>
+        <Attr Name="UsedIn" Val="synthesis"/>
+        <Attr Name="UsedIn" Val="implementation"/>
+      </FileInfo>
+    </File>
+    <Config>
+      <Option Name="ConstrsType" Val="XDC"/>
+    </Config>
+  </FileSet>
+  <FileSet Name="utils" Type="Utils" RelSrcDir="$PSRCDIR/utils_1" RelGenDir="$PGENDIR/utils_1">
+    <Filter Type="Utils"/>
+    <File Path="$PSRCDIR/utils_1/imports/synth_1/serRAM.dcp">
+      <FileInfo>
+        <Attr Name="UsedIn" Val="synthesis"/>
+        <Attr Name="UsedIn" Val="implementation"/>
+        <Attr Name="UsedInSteps" Val="synth_1"/>
+        <Attr Name="AutoDcp" Val="1"/>
+      </FileInfo>
+    </File>
+    <Config>
+      <Option Name="TopAutoSet" Val="TRUE"/>
+    </Config>
+  </FileSet>
+  <Strategy Version="1" Minor="2">
+    <StratHandle Name="Vivado Implementation Defaults" Flow="Vivado Implementation 2022"/>
+    <Step Id="init_design"/>
+    <Step Id="opt_design"/>
+    <Step Id="power_opt_design"/>
+    <Step Id="place_design"/>
+    <Step Id="post_place_power_opt_design"/>
+    <Step Id="phys_opt_design"/>
+    <Step Id="route_design"/>
+    <Step Id="post_route_phys_opt_design"/>
+    <Step Id="write_bitstream"/>
+  </Strategy>
+</GenRun>

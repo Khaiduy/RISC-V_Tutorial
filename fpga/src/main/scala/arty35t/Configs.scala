@@ -1,6 +1,7 @@
 // See LICENSE for license details.
 package chipyard.fpga.arty35t
 
+import chipyard.config.WithBroadcastManager
 import freechips.rocketchip.devices.debug.DebugModuleKey
 import freechips.rocketchip.devices.tilelink.BootROMLocated
 import freechips.rocketchip.diplomacy._
@@ -15,6 +16,7 @@ import testchipip.{CustomBootPinKey, SerialTLKey}
 import scala.sys.process._
 import sifive.blocks.devices.gpio.PeripheryGPIOKey
 import sifive.blocks.devices.gpio.GPIOParams
+// import chipyard.devices.gcd._
 
 class WithSystemModifications extends Config((site, here, up) => {
   case DTSTimebase => BigInt{(1e6).toLong}
@@ -40,6 +42,7 @@ class WithDefaultPeripherals extends Config((site, here, up) => {
   case PeripheryUARTKey => List(UARTParams(address = BigInt(0x64000000L)))
   case PeripherySPIKey => List(SPIParams(rAddress = BigInt(0x64001000L)))
   case PeripheryGPIOKey => List(GPIOParams(address = BigInt(0x64002000L), width = 24))
+  // case PeripheryGCDKey => List(GCDParams2(BigInt(0x64003000L)))
 })
 
 class WithTinyArty35TTweaks extends Config(
@@ -67,8 +70,22 @@ class WithTinyArty35TTweaks extends Config(
   new WithSystemModifications ++
   new freechips.rocketchip.subsystem.WithoutTLMonitors)
 
+// class SmallRocketArty35TConfig extends Config(
+//   new WithTinyArty35TTweaks ++
+//   new chipyard.config.WithBroadcastManager ++
+//   new chipyard.SmallRocketNTTConfig
+// )
+
+// RV32 SmallRocket for Arty35T (no X25519 hardware)
+class SmallRocket32Arty35TConfig extends Config(
+  new WithTinyArty35TTweaks ++
+  new chipyard.config.WithBroadcastManager ++
+  new chipyard.SmallRocket32Config
+)
+
+// RV64 SmallRocket for Arty35T (with X25519 hardware) - original config
 class SmallRocketArty35TConfig extends Config(
   new WithTinyArty35TTweaks ++
   new chipyard.config.WithBroadcastManager ++
-  new chipyard.TinyRocketConfig
+  new chipyard.SmallRocketConfig
 )

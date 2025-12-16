@@ -26,6 +26,12 @@ class DigitalTop(implicit p: Parameters) extends ChipyardSystem
   with sifive.blocks.devices.spi.HasPeripherySPIFlash // Enables optionally adding the sifive SPI flash controller
   with sifive.blocks.devices.spi.HasPeripherySPI // Enables optionally adding the sifive SPI port
   with icenet.CanHavePeripheryIceNIC // Enables optionally adding the IceNIC for FireSim
+
+  with chipyard.crypto.x25519.CanHavePeripheryX25519 // Enables optionally adding the X25519 accelerator
+  with chipyard.crypto.aes_gcm.CanHavePeripheryAESGCM // Enables optionally adding the AESGCM accelerator
+  with chipyard.crypto.ascon.CanHavePeripheryASCON // Enables optionally adding the ASCON accelerator
+  with chipyard.crypto.hmac_sha.CanHavePeripheryHMAC_SHA // Enables optionally adding the HMAC_SHA accelerator
+
   with chipyard.example.CanHavePeripheryInitZero // Enables optionally adding the initzero example widget
   with chipyard.example.CanHavePeripheryGCD // Enables optionally adding the GCD example widget
   with chipyard.example.CanHavePeripheryStreamingFIR // Enables optionally adding the DSPTools FIR example widget

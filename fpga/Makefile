@@ -14,7 +14,7 @@ sim_name := none
 #########################################################################################
 # include shared variables
 #########################################################################################
-SUB_PROJECT ?= arty35t
+SUB_PROJECT ?= arty100t
 
 ifeq ($(SUB_PROJECT),vc707)
 	SBT_PROJECT       ?= fpga_platforms
@@ -74,10 +74,10 @@ endif
 ifeq ($(SUB_PROJECT),arty100t)
 	# TODO: Fix with Arty
 	SBT_PROJECT       ?= fpga_platforms
-	MODEL             ?= Arty100THarness
-	VLOG_MODEL        ?= Arty100THarness
+	MODEL             ?= Arty100TWithoutDDRHarness
+	VLOG_MODEL        ?= Arty100TWithoutDDRHarness
 	MODEL_PACKAGE     ?= chipyard.fpga.arty100t
-	CONFIG            ?= RocketArty100TConfig
+	CONFIG            ?= RocketOnChipSRAMArty100TConfig
 	CONFIG_PACKAGE    ?= chipyard.fpga.arty100t
 	GENERATOR_PACKAGE ?= chipyard
 	TB                ?= none # unused
@@ -158,6 +158,12 @@ debug-bitstream: $(build_dir)/obj/post_synth.dcp
 			$(build_dir)/debug_obj \
 			$(fpga_common_script_dir)
 
+.PHONY: download_bitstream
+download_bitstream:
+		vivado -mode batch -nolog -nojournal -notrace \
+			-source $(sim_dir)/scripts/program.tcl \
+			-tclargs $(build_dir)/obj/$(MODEL).bit;
+			
 #########################################################################################
 # general cleanup rules
 #########################################################################################

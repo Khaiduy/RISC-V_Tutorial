@@ -2,11 +2,22 @@
 ROOT_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 BUILD_DIR := $(ROOT_DIR)/build
 
+# XLEN is passed from Scala config (32 or 64)
+XLEN ?= 64
+
 CC=$(RISCV)/bin/riscv64-unknown-elf-gcc
 OBJCOPY=$(RISCV)/bin/riscv64-unknown-elf-objcopy
 OBJDUMP=$(RISCV)/bin/riscv64-unknown-elf-objdump
-CFLAGS=-march=rv32imac -mcmodel=medany -O2 -std=gnu11 -Wall -nostartfiles
-CFLAGS+= -fno-common -g -DENTROPY=0 -mabi=ilp32 -DNONSMP_HART=0
+
+# Architecture flags based on XLEN
+ifeq ($(XLEN),32)
+  ARCH_FLAGS = -march=rv32imac_zicsr_zifencei -mabi=ilp32
+else
+  ARCH_FLAGS = -march=rv64imac_zicsr_zifencei -mabi=lp64
+endif
+
+CFLAGS=$(ARCH_FLAGS) -mcmodel=medany -O2 -std=gnu11 -Wall -nostartfiles -nostdlib -nodefaultlibs
+CFLAGS+= -fno-common -g -DENTROPY=0 -DNONSMP_HART=0
 CFLAGS+= -I $(ROOT_DIR)/include -I.
 LFLAGS=-static -nostdlib -L $(ROOT_DIR)/linker -T sdboot.elf.lds
 

@@ -1,0 +1,303 @@
+CC = /home/khaiduy/opt/riscv/bin/riscv64-unknown-elf-gcc
+OBJCOPY = /home/khaiduy/opt/riscv/bin/riscv64-unknown-elf-objcopy
+SIZE = /home/khaiduy/opt/riscv/bin/riscv64-unknown-elf-size
+OBJDUMP = /home/khaiduy/opt/riscv/bin/riscv64-unknown-elf-objdump
+NM = /home/khaiduy/opt/riscv/bin/riscv64-unknown-elf-nm
+
+# RV32IMAC for 32-bit Rocket core
+ARCH_FLAGS = -march=rv32imac_zicsr_zifencei -mabi=ilp32 -mcmodel=medany
+
+# Size optimization (-Os) - most reliable
+CFLAGS = $(ARCH_FLAGS) -Os -g0 -ffunction-sections -fdata-sections
+CFLAGS += -fno-strict-aliasing
+CFLAGS += -nostartfiles -nostdlib -nodefaultlibs
+CFLAGS += -Wall -DTINYCRYPT -DCOMPACT25519 -DZCBOR_CANONICAL
+CFLAGS += -fno-unwind-tables -fno-asynchronous-unwind-tables
+CFLAGS += -fomit-frame-pointer -fno-stack-protector
+
+# Relaxed flags for external libraries (suppress strict-aliasing warnings)
+CFLAGS_EXTERNAL = $(CFLAGS) -Wno-strict-aliasing -Wno-uninitialized
+
+# Conservative optimization for crypto libraries (c25519) - O2 breaks them!
+CFLAGS_CRYPTO = $(ARCH_FLAGS) -Os -g0 -ffunction-sections -fdata-sections
+CFLAGS_CRYPTO += -fno-strict-aliasing
+CFLAGS_CRYPTO += -nostartfiles -nostdlib -nodefaultlibs
+CFLAGS_CRYPTO += -Wall -DTINYCRYPT -DCOMPACT25519 -DZCBOR_CANONICAL
+CFLAGS_CRYPTO += -fno-unwind-tables -fno-asynchronous-unwind-tables
+CFLAGS_CRYPTO += -fomit-frame-pointer -fno-stack-protector
+
+LDFLAGS = $(ARCH_FLAGS) -T linker/main.lds -Llinker
+LDFLAGS += -nostartfiles -nostdlib -nodefaultlibs
+LDFLAGS += -Wl,--gc-sections
+LDFLAGS += -Wl,--allow-multiple-definition -Wl,--strip-all
+
+INCLUDES = -I. -Iinclude
+INCLUDES += -Iuoscore-uedhoc/inc
+INCLUDES += -Iuoscore-uedhoc/inc/edhoc
+INCLUDES += -Iuoscore-uedhoc/externals/zcbor/include
+INCLUDES += -Iuoscore-uedhoc/externals/tinycrypt/lib/include
+INCLUDES += -Iuoscore-uedhoc/externals/compact25519/src
+INCLUDES += -Iuoscore-uedhoc/externals/compact25519/src/c25519
+INCLUDES += -Idriver/x25519
+
+# Common sources
+COMMON_SOURCES = src/kprintf.c src/libc_stubs.c src/csprng_stub.c
+
+# ZCBOR
+COMMON_SOURCES += uoscore-uedhoc/externals/zcbor/src/zcbor_common.c
+COMMON_SOURCES += uoscore-uedhoc/externals/zcbor/src/zcbor_encode.c
+COMMON_SOURCES += uoscore-uedhoc/externals/zcbor/src/zcbor_decode.c
+
+# TinyCrypt - ONLY Suite 0 required crypto
+TINYCRYPT_DIR = uoscore-uedhoc/externals/tinycrypt/lib/source
+COMMON_SOURCES += $(TINYCRYPT_DIR)/aes_encrypt.c
+COMMON_SOURCES += $(TINYCRYPT_DIR)/ccm_mode.c
+COMMON_SOURCES += $(TINYCRYPT_DIR)/sha256.c
+COMMON_SOURCES += $(TINYCRYPT_DIR)/hmac.c
+COMMON_SOURCES += $(TINYCRYPT_DIR)/utils.c
+# P-256 ECC REMOVED - Suite 0 uses X25519 only
+# COMMON_SOURCES += $(TINYCRYPT_DIR)/ecc.c
+# COMMON_SOURCES += $(TINYCRYPT_DIR)/ecc_dh.c
+# COMMON_SOURCES += $(TINYCRYPT_DIR)/ecc_dsa.c
+# COMMON_SOURCES += $(TINYCRYPT_DIR)/ecc_platform_specific.c
+
+# Software X25519 (COMPACT25519)
+COMPACT25519_DIR = uoscore-uedhoc/externals/compact25519/src
+COMMON_SOURCES += $(COMPACT25519_DIR)/compact_x25519.c
+COMMON_SOURCES += $(COMPACT25519_DIR)/compact_ed25519.c
+COMMON_SOURCES += $(COMPACT25519_DIR)/compact_wipe.c
+COMMON_SOURCES += $(COMPACT25519_DIR)/c25519/c25519.c
+COMMON_SOURCES += $(COMPACT25519_DIR)/c25519/ed25519.c
+COMMON_SOURCES += $(COMPACT25519_DIR)/c25519/edsign.c
+COMMON_SOURCES += $(COMPACT25519_DIR)/c25519/f25519.c
+COMMON_SOURCES += $(COMPACT25519_DIR)/c25519/fprime.c
+COMMON_SOURCES += $(COMPACT25519_DIR)/c25519/sha512.c
+
+# X25519 Hardware Driver (DISABLED - using software implementation)
+# COMMON_SOURCES += driver/x25519/x25519.c
+
+ASM_SOURCES = src/crt0.S
+LIBS = -Luoscore-uedhoc/build -luoscore-uedhoc -lgcc
+
+# ============================================
+# Targets
+# ============================================
+
+.PHONY: all initiator responder initiator_psk responder_psk clean help
+
+help:
+	@echo "EDHOC Build System"
+	@echo ""
+	@echo "Targets:"
+	@echo "  make initiator      - Build Board A (Initiator, Method 3 - Suite 0)"
+	@echo "  make responder      - Build Board B (Responder, Method 3 - Suite 0)"
+	@echo "  make initiator_psk  - Build Board A (Initiator, Method 4 - PSK)"
+	@echo "  make responder_psk  - Build Board B (Responder, Method 4 - PSK)"
+	@echo "  make all            - Build both Method 3 binaries"
+	@echo "  make psk            - Build both Method 4 (PSK) binaries"
+	@echo "  make clean          - Clean all builds"
+	@echo ""
+
+all: initiator responder
+
+psk: initiator_psk responder_psk
+
+# ============================================
+# Build rules
+# ============================================
+
+# Search paths
+vpath %.c $(sort $(dir $(COMMON_SOURCES)))
+vpath %.c src
+vpath %.S src
+
+build_initiator build_responder:
+	@mkdir -p $@
+
+# Special rules for external libraries (zcbor) - suppress strict-aliasing warnings
+build_initiator/zcbor_%.o: uoscore-uedhoc/externals/zcbor/src/zcbor_%.c | build_initiator
+	@echo "[CC] $< (external)"
+	@$(CC) -c $(CFLAGS_EXTERNAL) $(INCLUDES) $< -o $@
+
+build_responder/zcbor_%.o: uoscore-uedhoc/externals/zcbor/src/zcbor_%.c | build_responder
+	@echo "[CC] $< (external)"
+	@$(CC) -c $(CFLAGS_EXTERNAL) $(INCLUDES) $< -o $@
+
+# Special rules for c25519 crypto - MUST use -Os (O2 breaks it!)
+build_initiator/c25519.o: $(COMPACT25519_DIR)/c25519/c25519.c | build_initiator
+	@echo "[CC] $< (crypto -Os)"
+	@$(CC) -c $(CFLAGS_CRYPTO) $(INCLUDES) $< -o $@
+
+build_initiator/f25519.o: $(COMPACT25519_DIR)/c25519/f25519.c | build_initiator
+	@echo "[CC] $< (crypto -Os)"
+	@$(CC) -c $(CFLAGS_CRYPTO) $(INCLUDES) $< -o $@
+
+build_initiator/fprime.o: $(COMPACT25519_DIR)/c25519/fprime.c | build_initiator
+	@echo "[CC] $< (crypto -Os)"
+	@$(CC) -c $(CFLAGS_CRYPTO) $(INCLUDES) $< -o $@
+
+build_initiator/ed25519.o: $(COMPACT25519_DIR)/c25519/ed25519.c | build_initiator
+	@echo "[CC] $< (crypto -Os)"
+	@$(CC) -c $(CFLAGS_CRYPTO) $(INCLUDES) $< -o $@
+
+build_initiator/edsign.o: $(COMPACT25519_DIR)/c25519/edsign.c | build_initiator
+	@echo "[CC] $< (crypto -Os)"
+	@$(CC) -c $(CFLAGS_CRYPTO) $(INCLUDES) $< -o $@
+
+build_initiator/sha512.o: $(COMPACT25519_DIR)/c25519/sha512.c | build_initiator
+	@echo "[CC] $< (crypto -Os)"
+	@$(CC) -c $(CFLAGS_CRYPTO) $(INCLUDES) $< -o $@
+
+build_initiator/compact_x25519.o: $(COMPACT25519_DIR)/compact_x25519.c | build_initiator
+	@echo "[CC] $< (crypto -Os)"
+	@$(CC) -c $(CFLAGS_CRYPTO) $(INCLUDES) $< -o $@
+
+build_initiator/compact_ed25519.o: $(COMPACT25519_DIR)/compact_ed25519.c | build_initiator
+	@echo "[CC] $< (crypto -Os)"
+	@$(CC) -c $(CFLAGS_CRYPTO) $(INCLUDES) $< -o $@
+
+build_responder/c25519.o: $(COMPACT25519_DIR)/c25519/c25519.c | build_responder
+	@echo "[CC] $< (crypto -Os)"
+	@$(CC) -c $(CFLAGS_CRYPTO) $(INCLUDES) $< -o $@
+
+build_responder/f25519.o: $(COMPACT25519_DIR)/c25519/f25519.c | build_responder
+	@echo "[CC] $< (crypto -Os)"
+	@$(CC) -c $(CFLAGS_CRYPTO) $(INCLUDES) $< -o $@
+
+build_responder/fprime.o: $(COMPACT25519_DIR)/c25519/fprime.c | build_responder
+	@echo "[CC] $< (crypto -Os)"
+	@$(CC) -c $(CFLAGS_CRYPTO) $(INCLUDES) $< -o $@
+
+build_responder/ed25519.o: $(COMPACT25519_DIR)/c25519/ed25519.c | build_responder
+	@echo "[CC] $< (crypto -Os)"
+	@$(CC) -c $(CFLAGS_CRYPTO) $(INCLUDES) $< -o $@
+
+build_responder/edsign.o: $(COMPACT25519_DIR)/c25519/edsign.c | build_responder
+	@echo "[CC] $< (crypto -Os)"
+	@$(CC) -c $(CFLAGS_CRYPTO) $(INCLUDES) $< -o $@
+
+build_responder/sha512.o: $(COMPACT25519_DIR)/c25519/sha512.c | build_responder
+	@echo "[CC] $< (crypto -Os)"
+	@$(CC) -c $(CFLAGS_CRYPTO) $(INCLUDES) $< -o $@
+
+build_responder/compact_x25519.o: $(COMPACT25519_DIR)/compact_x25519.c | build_responder
+	@echo "[CC] $< (crypto -Os)"
+	@$(CC) -c $(CFLAGS_CRYPTO) $(INCLUDES) $< -o $@
+
+build_responder/compact_ed25519.o: $(COMPACT25519_DIR)/compact_ed25519.c | build_responder
+	@echo "[CC] $< (crypto -Os)"
+	@$(CC) -c $(CFLAGS_CRYPTO) $(INCLUDES) $< -o $@
+
+# Standard build rules
+build_initiator/%.o: %.c | build_initiator
+	@echo "[CC] $<"
+	@$(CC) -c $(CFLAGS) $(INCLUDES) $< -o $@
+
+build_initiator/%.o: %.S | build_initiator
+	@echo "[AS] $<"
+	@$(CC) -c $(CFLAGS) $(INCLUDES) $< -o $@
+
+build_responder/%.o: %.c | build_responder
+	@echo "[CC] $<"
+	@$(CC) -c $(CFLAGS) $(INCLUDES) $< -o $@
+
+build_responder/%.o: %.S | build_responder
+	@echo "[AS] $<"
+	@$(CC) -c $(CFLAGS) $(INCLUDES) $< -o $@
+
+# ============================================
+# Initiator (Board A)
+# ============================================
+INIT_SOURCES := src/edhoc_initiator_suite0.c $(COMMON_SOURCES)
+INIT_C_OBJECTS := $(addprefix build_initiator/,$(notdir $(INIT_SOURCES:.c=.o)))
+INIT_ASM_OBJECTS := $(addprefix build_initiator/,$(notdir $(ASM_SOURCES:.S=.o)))
+
+build_initiator/initiator.elf: $(INIT_C_OBJECTS) $(INIT_ASM_OBJECTS)
+	@echo "[LD] $@"
+	@$(CC) $(LDFLAGS) -Wl,-Map=build_initiator/initiator.map $^ $(LIBS) -o $@
+
+build_initiator/initiator.bin: build_initiator/initiator.elf
+	@echo "[OBJCOPY] $@"
+	@$(OBJCOPY) -O binary $< $@
+
+initiator: build_initiator/initiator.elf build_initiator/initiator.bin
+	@echo ""
+	@echo "========================================="
+	@echo "   Board A (Initiator) - BUILD COMPLETE"
+	@echo "========================================="
+	@$(SIZE) build_initiator/initiator.elf
+	@echo "========================================="
+
+# ============================================
+# Responder (Board B)
+# ============================================
+RESP_SOURCES := src/edhoc_responder_suite0.c $(COMMON_SOURCES)
+RESP_C_OBJECTS := $(addprefix build_responder/,$(notdir $(RESP_SOURCES:.c=.o)))
+RESP_ASM_OBJECTS := $(addprefix build_responder/,$(notdir $(ASM_SOURCES:.S=.o)))
+
+build_responder/responder.elf: $(RESP_C_OBJECTS) $(RESP_ASM_OBJECTS)
+	@echo "[LD] $@"
+	@$(CC) $(LDFLAGS) -Wl,-Map=build_responder/responder.map $^ $(LIBS) -o $@
+
+build_responder/responder.bin: build_responder/responder.elf
+	@echo "[OBJCOPY] $@"
+	@$(OBJCOPY) -O binary $< $@
+
+responder: build_responder/responder.elf build_responder/responder.bin
+	@echo ""
+	@echo "========================================="
+	@echo "   Board B (Responder) - BUILD COMPLETE"
+	@echo "========================================="
+	@$(SIZE) build_responder/responder.elf
+	@echo "========================================="
+
+# ============================================
+# Initiator PSK (Board A - Method 4)
+# ============================================
+INIT_PSK_SOURCES := src/edhoc_initiator_psk.c $(COMMON_SOURCES)
+INIT_PSK_C_OBJECTS := $(addprefix build_initiator/,$(notdir $(INIT_PSK_SOURCES:.c=.o)))
+INIT_PSK_ASM_OBJECTS := $(addprefix build_initiator/,$(notdir $(ASM_SOURCES:.S=.o)))
+
+build_initiator/initiator_psk.elf: $(INIT_PSK_C_OBJECTS) $(INIT_PSK_ASM_OBJECTS)
+	@echo "[LD] $@"
+	@$(CC) $(LDFLAGS) -Wl,-Map=build_initiator/initiator_psk.map $^ $(LIBS) -o $@
+
+build_initiator/initiator_psk.bin: build_initiator/initiator_psk.elf
+	@echo "[OBJCOPY] $@"
+	@$(OBJCOPY) -O binary $< $@
+
+initiator_psk: build_initiator/initiator_psk.elf build_initiator/initiator_psk.bin
+	@echo ""
+	@echo "============================================="
+	@echo "   Board A (Initiator PSK) - BUILD COMPLETE"
+	@echo "============================================="
+	@$(SIZE) build_initiator/initiator_psk.elf
+	@echo "============================================="
+
+# ============================================
+# Responder PSK (Board B - Method 4)
+# ============================================
+RESP_PSK_SOURCES := src/edhoc_responder_psk.c $(COMMON_SOURCES)
+RESP_PSK_C_OBJECTS := $(addprefix build_responder/,$(notdir $(RESP_PSK_SOURCES:.c=.o)))
+RESP_PSK_ASM_OBJECTS := $(addprefix build_responder/,$(notdir $(ASM_SOURCES:.S=.o)))
+
+build_responder/responder_psk.elf: $(RESP_PSK_C_OBJECTS) $(RESP_PSK_ASM_OBJECTS)
+	@echo "[LD] $@"
+	@$(CC) $(LDFLAGS) -Wl,-Map=build_responder/responder_psk.map $^ $(LIBS) -o $@
+
+build_responder/responder_psk.bin: build_responder/responder_psk.elf
+	@echo "[OBJCOPY] $@"
+	@$(OBJCOPY) -O binary $< $@
+
+responder_psk: build_responder/responder_psk.elf build_responder/responder_psk.bin
+	@echo ""
+	@echo "============================================="
+	@echo "   Board B (Responder PSK) - BUILD COMPLETE"
+	@echo "============================================="
+	@$(SIZE) build_responder/responder_psk.elf
+	@echo "============================================="
+
+clean:
+	@echo "Cleaning build directories..."
+	@rm -rf build_initiator build_responder
+	@echo "Done!"

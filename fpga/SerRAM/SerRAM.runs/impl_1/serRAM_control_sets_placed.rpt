@@ -1,0 +1,115 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2024 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2024.2 (lin64) Build 5239630 Fri Nov 08 22:34:34 MST 2024
+| Date         : Mon Nov  3 16:47:46 2025
+| Host         : khaiduy-uec running 64-bit Ubuntu 24.04.3 LTS
+| Command      : report_control_sets -verbose -file serRAM_control_sets_placed.rpt
+| Design       : serRAM
+| Device       : xc7a35ti
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Control Set Information
+
+Table of Contents
+-----------------
+1. Summary
+2. Histogram
+3. Flip-Flop Distribution
+4. Detailed Control Set Information
+
+1. Summary
+----------
+
++----------------------------------------------------------+-------+
+|                          Status                          | Count |
++----------------------------------------------------------+-------+
+| Total control sets                                       |    37 |
+|    Minimum number of control sets                        |    37 |
+|    Addition due to synthesis replication                 |     0 |
+|    Addition due to physical synthesis replication        |     0 |
+| Unused register locations in slices containing registers |    89 |
++----------------------------------------------------------+-------+
+* Control sets can be merged at opt_design using control_set_merge or merge_equivalent_drivers
+** Run report_qor_suggestions for automated merging and remapping suggestions
+
+
+2. Histogram
+------------
+
++--------------------+-------+
+|       Fanout       | Count |
++--------------------+-------+
+| Total control sets |    37 |
+| >= 0 to < 4        |     3 |
+| >= 4 to < 6        |     8 |
+| >= 6 to < 8        |     2 |
+| >= 8 to < 10       |    10 |
+| >= 10 to < 12      |     1 |
+| >= 12 to < 14      |     0 |
+| >= 14 to < 16      |     1 |
+| >= 16              |    12 |
++--------------------+-------+
+* Control sets can be remapped at either synth_design or opt_design
+
+
+3. Flip-Flop Distribution
+-------------------------
+
++--------------+-----------------------+------------------------+-----------------+--------------+
+| Clock Enable | Synchronous Set/Reset | Asynchronous Set/Reset | Total Registers | Total Slices |
++--------------+-----------------------+------------------------+-----------------+--------------+
+| No           | No                    | No                     |              71 |           23 |
+| No           | No                    | Yes                    |               0 |            0 |
+| No           | Yes                   | No                     |              38 |           16 |
+| Yes          | No                    | No                     |             460 |          132 |
+| Yes          | No                    | Yes                    |               0 |            0 |
+| Yes          | Yes                   | No                     |              30 |            8 |
++--------------+-----------------------+------------------------+-----------------+--------------+
+
+
+4. Detailed Control Set Information
+-----------------------------------
+
++----------------------------------+-----------------------------------------------+----------------------------------------------+------------------+----------------+--------------+
+|           Clock Signal           |                 Enable Signal                 |               Set/Reset Signal               | Slice Load Count | Bel Load Count | Bels / Slice |
++----------------------------------+-----------------------------------------------+----------------------------------------------+------------------+----------------+--------------+
+|  clk_wiz_0_clk_wiz/inst/clk_out1 |                                               |                                              |                1 |              1 |         1.00 |
+|  ram_clk_BUFG                    | SerRam/fragmenter/_GEN_1                      | SerRam/fragmenter/repeater/mmcm_adv_inst     |                1 |              1 |         1.00 |
+|  ram_clk_BUFG                    | SerRam/serdesser/inDes/data_130               |                                              |                1 |              3 |         3.00 |
+|  ram_clk_BUFG                    | SerRam/serdesser/inDes/receiving3             |                                              |                2 |              4 |         2.00 |
+|  ram_clk_BUFG                    | SerRam/serdesser/inDes/data_110               |                                              |                1 |              4 |         4.00 |
+|  ram_clk_BUFG                    | SerRam/tsi2tl/state                           |                                              |                2 |              4 |         2.00 |
+|  ram_clk_BUFG                    | SerRam/serdesser/inDes/data_170               |                                              |                1 |              5 |         5.00 |
+|  ram_clk_BUFG                    | SerRam/serdesser/inDes/data_180               |                                              |                1 |              5 |         5.00 |
+|  ram_clk_BUFG                    | SerRam/serdesser/inDes/data_190               |                                              |                2 |              5 |         2.50 |
+|  ram_clk_BUFG                    | SerRam/serdesser/outSer/_T_2                  | SerRam/serdesser/outSer/sendCount[4]_i_1_n_0 |                1 |              5 |         5.00 |
+|  ram_clk_BUFG                    | SerRam/serdesser/inDes/p_40_in                | SerRam/serdesser/inDes/recvCount[4]_i_1_n_0  |                1 |              5 |         5.00 |
+|  ram_clk_BUFG                    | SerRam/serdesser/inDes/data_10                |                                              |                1 |              6 |         6.00 |
+|  ram_clk_BUFG                    | SerRam/serdesser/inDes/data_00                |                                              |                2 |              7 |         3.50 |
+|  ram_clk_BUFG                    | SerRam/serdesser/inDes/data_50                |                                              |                2 |              8 |         4.00 |
+|  ram_clk_BUFG                    | SerRam/serdesser/inDes/data_60                |                                              |                3 |              8 |         2.67 |
+|  ram_clk_BUFG                    | SerRam/serdesser/inDes/data_40                |                                              |                2 |              8 |         4.00 |
+|  ram_clk_BUFG                    | SerRam/serdesser/inDes/data_30                |                                              |                2 |              8 |         4.00 |
+|  ram_clk_BUFG                    | SerRam/serdesser/inDes/data_70                |                                              |                2 |              8 |         4.00 |
+|  ram_clk_BUFG                    | SerRam/serdesser/inDes/data_20                |                                              |                1 |              8 |         8.00 |
+|  ram_clk_BUFG                    | SerRam/serdesser/inDes/data_100               |                                              |                2 |              8 |         4.00 |
+|  ram_clk_BUFG                    | SerRam/serdesser/inDes/data_80                |                                              |                2 |              8 |         4.00 |
+|  ram_clk_BUFG                    | SerRam/serdesser/inDes/data_90                |                                              |                3 |              8 |         2.67 |
+|  ram_clk_BUFG                    | SerRam/buffer/x1_a_q/ram_ext/mem_MPORT_en     |                                              |                4 |              9 |         2.25 |
+|  clk_wiz_0_clk_wiz/inst/clk_out1 |                                               | clk_div_inst/p_0_in                          |                4 |             10 |         2.50 |
+|  ram_clk_BUFG                    | SerRam/buffer/x1_a_q/enq_ptr_value_reg_0      |                                              |                4 |             14 |         3.50 |
+|  ram_clk_BUFG                    | SerRam/serdesser/outArb/lockIdx_reg[0]_0      | SerRam/serdesser/outArb/lockIdx_reg[0]_1     |                5 |             19 |         3.80 |
+|  ram_clk_BUFG                    |                                               | SerRam/fragmenter/repeater/mmcm_adv_inst     |               12 |             28 |         2.33 |
+|  ram_clk_BUFG                    | SerRam/tsi2tl/addr0                           |                                              |                8 |             29 |         3.62 |
+|  ram_clk_BUFG                    | SerRam/serdesser/inDes/E[0]                   |                                              |               11 |             36 |         3.27 |
+|  ram_clk_BUFG                    | SerRam/tsi2tl/len[0]_i_1_n_0                  |                                              |               16 |             64 |         4.00 |
+|  ram_clk_BUFG                    | SerRam/tsi2tl/_T_16                           |                                              |               11 |             64 |         5.82 |
+|  ram_clk_BUFG                    |                                               |                                              |               22 |             70 |         3.18 |
+|  ram_clk_BUFG                    | SerRam/buffer_1/bundleIn_0_d_q/ram_ext/do_enq |                                              |               11 |             88 |         8.00 |
+|  ram_clk_BUFG                    | SerRam/buffer/bundleIn_0_d_q/ram_ext/do_enq   |                                              |               14 |            112 |         8.00 |
+|  ram_clk_BUFG                    | SerRam/serdesser/outArb/lockIdx_reg[0]_0      |                                              |               46 |            137 |         2.98 |
+|  ram_clk_BUFG                    | SerRam/buffer_1/x1_a_q/ram_ext/do_enq         |                                              |               18 |            144 |         8.00 |
+|  ram_clk_BUFG                    | SerRam/serdesser/inDes/do_enq                 |                                              |               19 |            152 |         8.00 |
++----------------------------------+-----------------------------------------------+----------------------------------------------+------------------+----------------+--------------+
+
+

@@ -9,7 +9,9 @@
 #include "kprintf.h"
 
 // Total payload in B
-#define PAYLOAD_SIZE_B (4 << 10) // default: 30MiB
+// CRITICAL: Must be multiple of 512 (sector size) AND fit within MEMORY_MEM_SIZE (64KB)
+// With 64KB SRAM and 2KB stack, we can safely load up to 60KB
+#define PAYLOAD_SIZE_B 61440 // 60KB = 120 sectors (leaves 2KB for stack + 2KB buffer)
 // A sector is 512 bytes, so (1 << 11) * 512B = 1 MiB
 #define SECTOR_SIZE_B 512
 // Payload size in # of sectors
@@ -234,7 +236,7 @@ int main(void)
 	kputs("University of Electro-Communications...\r\n");
 	kputs("Hello world from Pham Lab!!!\r\n");
 	
-	__asm__ __volatile__ ("fence.i" : : : "memory");
+	REG32(uart, UART_REG_TXCTRL) = UART_TXEN;
 
 	return 0;
 }

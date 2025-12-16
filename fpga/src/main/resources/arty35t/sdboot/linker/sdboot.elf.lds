@@ -21,7 +21,7 @@ SECTIONS
     *(.text.unlikely .text.unlikely.*)
     *(.text .text.* .gnu.linkonce.t.*)
     PROVIDE(_etext = .);
-    . += 0x40; /* to create a gap between .text and .data b/c ifetch can fetch ahead from .data */
+    . += 0x40;
   } >bootrom_mem  :text
 
   .eh_frame ALIGN((ADDR(.text) + SIZEOF(.text)), 8) : AT(ALIGN((LOADADDR(.text) + SIZEOF(.text)), 8)) {
@@ -29,16 +29,12 @@ SECTIONS
   } >bootrom_mem  :text
 
   .srodata ALIGN((ADDR(.eh_frame) + SIZEOF(.eh_frame)), 8) : AT(ALIGN((LOADADDR(.eh_frame) + SIZEOF(.eh_frame)), 8)) ALIGN_WITH_INPUT {
-    *(.srodata.cst16)
-    *(.srodata.cst8)
-    *(.srodata.cst4)
-    *(.srodata.cst2)
     *(.srodata.*)
   } >bootrom_mem  :data
 
   .data ALIGN((ADDR(.srodata) + SIZEOF(.srodata)), 8) : AT(ALIGN((LOADADDR(.srodata) + SIZEOF(.srodata)), 8)) ALIGN_WITH_INPUT {
     *(.data .data.* .gnu.linkonce.d.*)
-    *(.tohost) /* TODO: Support sections that aren't explicitly listed in this linker script */
+    *(.tohost)
   } >bootrom_mem  :data
 
   .sdata ALIGN((ADDR(.data) + SIZEOF(.data)), 8) : AT(ALIGN((LOADADDR(.data) + SIZEOF(.data)), 8)) ALIGN_WITH_INPUT {
@@ -47,34 +43,30 @@ SECTIONS
 
   .rodata ALIGN((ADDR(.sdata) + SIZEOF(.sdata)), 8) : AT(ALIGN((LOADADDR(.sdata) + SIZEOF(.sdata)), 8)) ALIGN_WITH_INPUT {
     *(.rodata .rodata.* .gnu.linkonce.r.*)
-    *(.dtb) /* Must be last if this code is added to RC's BootROM */
+    *(.dtb)
   } >bootrom_mem  :data
 
   PROVIDE(_data = ADDR(.rodata));
   PROVIDE(_data_lma = LOADADDR(.rodata));
   PROVIDE(_edata = .);
 
-  .bss ALIGN((ORIGIN(memory_mem) + 0x0), 8) : AT(ALIGN((ORIGIN(memory_mem) + 0x0), 8)) ALIGN(8) {
+  /* CHANGED: Put .bss in bootrom_mem instead of memory_mem */
+  .bss ALIGN((ADDR(.rodata) + SIZEOF(.rodata)), 8) : AT(ALIGN((LOADADDR(.rodata) + SIZEOF(.rodata)), 8)) ALIGN(8) {
     PROVIDE(_fbss = .);
-    PROVIDE(__global_pointer$ = . + 0x7C0);
     *(.sbss .sbss.* .gnu.linkonce.sb.*)
     *(.bss .bss.* .gnu.linkonce.b.*)
     . = ALIGN(8);
     PROVIDE(_ebss = .);
-  } >memory_mem  :bss
+  } >bootrom_mem  :bss  /* ← CHANGED from memory_mem */
 
-  PROVIDE(_end = .);
+  PROVIDE(_end = _ebss);
 
-  /*
-   * heap_stack_region_usable_end: (ORIGIN(memory_mem) + LENGTH(memory_mem))
-   * heap_stack_min_size: 4096
-   * heap_stack_max_size: 1048576
-   */
-  PROVIDE(_sp = ALIGN(MIN((ORIGIN(memory_mem) + LENGTH(memory_mem)), _ebss + 1048576) - 7, 8));
-  PROVIDE(_heap_end = _sp - 2048);
+  /* Verify bootloader fits in 2KB ROM */
+  ASSERT((_end <= (ORIGIN(bootrom_mem) + LENGTH(bootrom_mem))), 
+         "ERROR: Bootloader exceeds 2KB BootROM size!")
 
-  /* This section is a noop and is only used for the ASSERT */
-  .stack : {
-    ASSERT(_sp >= (_ebss + 4096), "Error: No room left for the heap and stack");
-  }
+  /* Global pointer for main RAM access (if needed) */
+  PROVIDE(__global_pointer$ = ORIGIN(memory_mem) + 0x800);
+  
+  /* No explicit _sp needed - set in head.s */
 }
