@@ -8,11 +8,13 @@ BUILD_DIR = build
 # RV32IMAC for 32-bit Rocket core
 ARCH_FLAGS = -march=rv32imac_zicsr_zifencei -mabi=ilp32 -mcmodel=medany
 
-CFLAGS = $(ARCH_FLAGS) -Os -g0 -ffunction-sections -fdata-sections
+CFLAGS = $(ARCH_FLAGS) -Os -g0 -ffunction-sections -fdata-sections -Wunused-function
+CFLAGS += -fno-unwind-tables -fno-asynchronous-unwind-tables
 CFLAGS += -nostartfiles -nostdlib -nodefaultlibs
-CFLAGS += -Wall -Wextra -DTINYCRYPT -DCOMPACT25519
+CFLAGS += -Wall -Wextra -DTINYCRYPT -DCOMPACT25519 -DMESSAGE_4
 
 LDFLAGS = $(ARCH_FLAGS) -T linker/main.lds -Llinker
+LDFLAGS += -fno-unwind-tables -fno-asynchronous-unwind-tables
 LDFLAGS += -nostartfiles -nostdlib -nodefaultlibs
 LDFLAGS += -Wl,--gc-sections -Wl,-Map=$(BUILD_DIR)/$(TARGET).map
 LDFLAGS += -Wl,--allow-multiple-definition
