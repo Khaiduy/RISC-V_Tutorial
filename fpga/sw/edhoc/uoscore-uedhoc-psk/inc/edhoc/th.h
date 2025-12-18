@@ -41,9 +41,11 @@ enum err th2_calculate(enum hash_alg alg, struct byte_array *msg1_hash,
  * @param[in] cred              The credential.
  * @param[out] th34             The result.
  */
+#ifndef EDHOC_PSK_ONLY
 enum err th34_calculate(enum hash_alg alg, struct byte_array *th23,
 			struct byte_array *plaintext_23,
 			const struct byte_array *cred, struct byte_array *th34);
+#endif
 
 /**
  * @brief 			Computes TH_3 for PSK mode. 

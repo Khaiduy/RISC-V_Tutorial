@@ -30,7 +30,10 @@ enum aead_alg {
 	ASCON_AEAD_128 = 32,  /* Ascon-AEAD-128: 16-byte key, 16-byte nonce, 16-byte tag */
 };
 
-enum hash_alg { SHA_256 = -16 };
+enum hash_alg { 
+	SHA_256 = -16,
+	ASCON_HASH_256 = -32,  /* Ascon-Hash256: 32-byte digest */
+};
 
 enum ecdh_alg {
 	P256 = 1,

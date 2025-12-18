@@ -34,9 +34,9 @@ C_SOURCES += $(filter-out %signature_or_mac_msg.c %cert.c %edhoc_cose.c %associa
 # OSCORE REMOVED - Not needed for EDHOC-only implementation
 # C_SOURCES += $(wildcard src/oscore/*.c)
 C_SOURCES += $(wildcard src/common/*.c)
-# PSK-only: Exclude OSCORE and DATA_2 CBOR encoders
-# PSK-only: Exclude sig_structure encoder (only used by edhoc_cose.c)
-C_SOURCES += $(filter-out %oscore_% %edhoc_encode_data_2.c %edhoc_encode_sig_structure.c, $(wildcard src/cbor/*.c))
+# PSK-only: Exclude OSCORE, DATA_2, sig_structure, and cert CBOR encoders/decoders
+# These are only used for certificate-based Method 0-3
+C_SOURCES += $(filter-out %oscore_% %edhoc_encode_data_2.c %edhoc_encode_sig_structure.c %edhoc_decode_cert.c, $(wildcard src/cbor/*.c))
 
 # Ascon-AEAD sources (asm_rv32i - handcrafted RV32I assembly, ~1.6KB)
 C_SOURCES += externals/ascon-c/crypto_aead/asconaead128/asm_rv32i/encrypt.c
@@ -62,7 +62,7 @@ EXTENDED_CFLAGS += $(FEATURES)
 EXTENDED_CFLAGS += $(FEATURES)
 EXTENDED_CFLAGS += $(ARCH)
 EXTENDED_CFLAGS += $(OPT)
-EXTENDED_CFLAGS += $(DEBUG_PRINT)
+# EXTENDED_CFLAGS += $(DEBUG_PRINT)
 EXTENDED_CFLAGS += $(CBOR_ENGINE)
 EXTENDED_CFLAGS += $(OSCORE_NVM_SUPPORT)
 EXTENDED_CFLAGS += $(CRYPTO_ENGINE)
@@ -141,9 +141,12 @@ endif
 # C includes
 ################################################################################
 # Set a default crypto engine if non is provided in CRYPTO_ENGINE or CC
+# NOTE: For pure Ascon builds, we don't need TINYCRYPT
+ifneq ($(findstring ASCON,$(EXTENDED_CFLAGS)),ASCON) 
 ifneq ($(findstring TINYCRYPT,$(EXTENDED_CFLAGS)),TINYCRYPT) 
 ifneq ($(findstring MBEDTLS,$(EXTENDED_CFLAGS)),MBEDTLS) 
 EXTENDED_CFLAGS += -DTINYCRYPT
+endif
 endif
 endif
 
@@ -161,6 +164,10 @@ endif
 
 ifeq ($(findstring ASCON,$(EXTENDED_CFLAGS)),ASCON)
 C_INCLUDES += -Iexternals/ascon-c/crypto_aead/asconaead128/asm_rv32i
+# Use bi32_lowsize for hash (32-bit optimized, no libgcc needed)
+C_INCLUDES += -Iexternals/ascon-c/crypto_hash/asconhash256/bi32_lowsize
+C_INCLUDES += -Iexternals/ascon-c/tests
+C_INCLUDES += -Iinc/common
 endif
  
 ifeq ($(findstring MBEDTLS,$(EXTENDED_CFLAGS)),MBEDTLS)

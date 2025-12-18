@@ -71,6 +71,10 @@ CBOR_ENGINE += -DZCBOR
 # Responder to the Initiator, message_4 MUST be used.
 FEATURES += -DMESSAGE_4
 
+# PSK-only mode: exclude certificate-based Method 0-3 code paths
+# This removes th34_calculate and related unused functions
+FEATURES += -DEDHOC_PSK_ONLY
+
 # If EAD is not used set its buffer size to 0
 FEATURES += -DEAD_SIZE=0
 

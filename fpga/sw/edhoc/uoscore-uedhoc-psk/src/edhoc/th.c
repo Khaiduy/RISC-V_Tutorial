@@ -70,6 +70,9 @@ static inline enum err th2_input_encode(struct byte_array *hash_msg1,
  * @param[out] th34_input 	The result.
  * @retval			Ok or error code.
  */
+#ifndef EDHOC_PSK_ONLY
+/* th34_input_encode and th34_calculate are only used for Method 0-3.
+ * PSK mode uses th3_calculate_psk and th4_calculate_psk instead. */
 static enum err th34_input_encode(struct byte_array *th23,
 		  struct byte_array *plaintext_23,
 		  const struct byte_array *cred,
@@ -129,6 +132,7 @@ enum err th34_calculate(enum hash_alg alg, struct byte_array *th23,
 #endif
 	return ok;
 }
+#endif /* !EDHOC_PSK_ONLY */
 
 enum err th2_calculate(enum hash_alg alg, struct byte_array *msg1_hash,
 		       struct byte_array *g_y, struct byte_array *th2)

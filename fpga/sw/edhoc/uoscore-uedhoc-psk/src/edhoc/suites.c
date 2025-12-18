@@ -42,13 +42,13 @@ enum err get_suite(enum suite_label label, struct suite *suite)
 	} else if (label == SUITE_2) {
 		suite->suite_label = SUITE_2;
 		suite->edhoc_aead = ASCON_AEAD_128;  // Tag=16, Nonce=16, Key=16
-		suite->edhoc_hash = SHA_256;
+		suite->edhoc_hash = ASCON_HASH_256;  // Ascon-Hash256 (pure Ascon suite)
 		suite->edhoc_ecdh = X25519;
 		suite->edhoc_sign = EdDSA;
 		suite->app_aead = ASCON_AEAD_128;
-		suite->app_hash = SHA_256;
+		suite->app_hash = ASCON_HASH_256;    // Ascon-Hash256
 #ifdef DEBUG_PRINT
-		kprintf("\r\n*** SUITE 2 SELECTED: ASCON-AEAD-128 (16-byte nonce) ***\r\n\r\n");
+		kprintf("\r\n*** SUITE 2 SELECTED: ASCON-AEAD-128 + ASCON-HASH256 ***\r\n\r\n");
 #endif
 		return ok;
 	}
@@ -58,7 +58,7 @@ enum err get_suite(enum suite_label label, struct suite *suite)
 
 uint32_t get_hash_len(enum hash_alg alg)
 {
-	// MODIFIED: Only SHA-256 supported (Suite 0)
+	/* Both SHA-256 and Ascon-Hash256 produce 32-byte digests */
 	(void)alg;
 	return 32;
 }

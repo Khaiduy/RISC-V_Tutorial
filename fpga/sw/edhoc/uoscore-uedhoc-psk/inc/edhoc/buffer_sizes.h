@@ -19,6 +19,31 @@
 #define C_R_SIZE 10
 #endif
 
+/*
+ * PSK-only mode: Use smaller credential buffers since PSK credentials
+ * are typically 4-64 bytes vs 400+ bytes for certificate-based auth.
+ * Define EDHOC_PSK_ONLY to enable smaller buffers and save stack/code.
+ */
+#ifdef EDHOC_PSK_ONLY
+
+#ifndef ID_CRED_I_SIZE
+#define ID_CRED_I_SIZE 16   /* PSK ID_CRED is typically 4-8 bytes */
+#endif
+
+#ifndef ID_CRED_R_SIZE
+#define ID_CRED_R_SIZE 16   /* PSK ID_CRED is typically 4-8 bytes */
+#endif
+
+#ifndef CRED_I_SIZE
+#define CRED_I_SIZE 64      /* PSK CRED is typically 30-50 bytes */
+#endif
+
+#ifndef CRED_R_SIZE
+#define CRED_R_SIZE 64      /* PSK CRED is typically 30-50 bytes */
+#endif
+
+#else /* !EDHOC_PSK_ONLY - Certificate mode, large buffers */
+
 #ifndef ID_CRED_I_SIZE
 #define ID_CRED_I_SIZE 400
 #endif
@@ -34,6 +59,8 @@
 #ifndef CRED_R_SIZE
 #define CRED_R_SIZE 400
 #endif
+
+#endif /* EDHOC_PSK_ONLY */
 
 #ifndef SUITES_I_SIZE
 #define SUITES_I_SIZE 6

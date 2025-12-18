@@ -43,6 +43,10 @@ int crypto_aead_decrypt(unsigned char* m, unsigned long long* mlen,
                         unsigned long long clen, const unsigned char* ad,
                         unsigned long long adlen, const unsigned char* npub,
                         const unsigned char* k);
+
+/* Ascon-Hash256 (bi32_lowsize) and Ascon-HMAC */
+#include "crypto_hash.h"    /* bi32_lowsize crypto_hash() */
+#include "ascon_hmac.h"     /* Ascon-HMAC for HKDF */
 #endif
 
 #ifdef EDHOC_MOCK_CRYPTO_WRAPPER
@@ -717,7 +721,29 @@ enum err WEAK hkdf_extract(enum hash_alg alg, const struct byte_array *salt,
 	string. OSCORE sets the salt default value to empty byte string, which 
 	is converted to a string of zeroes (see Section 2.2 of [RFC5869])".*/
 
-	/*all currently prosed suites use hmac-sha256*/
+#ifdef ASCON
+	/* Ascon-HMAC for Suite 2 (Ascon-Hash256) */
+	if (alg == ASCON_HASH_256) {
+		uint8_t zero_salt[32] = { 0 };
+		const uint8_t *key;
+		unsigned long long key_len;
+		
+		if (salt->ptr == NULL || salt->len == 0) {
+			key = zero_salt;
+			key_len = 32;
+		} else {
+			key = salt->ptr;
+			key_len = salt->len;
+		}
+		
+		if (ascon_hmac(key, key_len, ikm->ptr, ikm->len, out) != 0) {
+			return hkdf_failed;
+		}
+		return ok;
+	}
+#endif
+
+	/* SHA-256 HMAC for Suite 0/1 */
 	if (alg != SHA_256) {
 		return crypto_operation_not_implemented;
 	}
@@ -771,14 +797,50 @@ enum err WEAK hkdf_extract(enum hash_alg alg, const struct byte_array *salt,
 enum err WEAK hkdf_expand(enum hash_alg alg, const struct byte_array *prk,
 			  const struct byte_array *info, struct byte_array *out)
 {
-	if (alg != SHA_256) {
-		return crypto_operation_not_implemented;
-	}
 	/* "N = ceil(L/HashLen)" */
 	uint32_t iterations = (out->len + 31) / 32;
 	/* "L length of output keying material in octets (<= 255*HashLen)"*/
 	if (iterations > 255) {
 		return hkdf_failed;
+	}
+
+#ifdef ASCON
+	/* Ascon-HMAC for Suite 2 (Ascon-Hash256) */
+	if (alg == ASCON_HASH_256) {
+		uint8_t t[32] = { 0 };
+		ascon_hmac_state_t h;
+		
+		for (uint8_t i = 1; i <= iterations; i++) {
+			if (ascon_hmac_init(&h, prk->ptr, prk->len) != 0) {
+				return hkdf_failed;
+			}
+			if (i > 1) {
+				if (ascon_hmac_update(&h, t, 32) != 0) {
+					return hkdf_failed;
+				}
+			}
+			if (ascon_hmac_update(&h, info->ptr, info->len) != 0) {
+				return hkdf_failed;
+			}
+			if (ascon_hmac_update(&h, &i, 1) != 0) {
+				return hkdf_failed;
+			}
+			if (ascon_hmac_final(&h, t) != 0) {
+				return hkdf_failed;
+			}
+			if (out->len < i * 32) {
+				memcpy(&out->ptr[(i - 1) * 32], t, out->len % 32);
+			} else {
+				memcpy(&out->ptr[(i - 1) * 32], t, 32);
+			}
+		}
+		return ok;
+	}
+#endif
+
+	/* SHA-256 HMAC for Suite 0/1 */
+	if (alg != SHA_256) {
+		return crypto_operation_not_implemented;
 	}
 
 #ifdef TINYCRYPT
@@ -1123,6 +1185,17 @@ enum err WEAK ephemeral_dh_key_gen(enum ecdh_alg alg, uint32_t seed,
 enum err WEAK hash(enum hash_alg alg, const struct byte_array *in,
 		   struct byte_array *out)
 {
+#ifdef ASCON
+	/* Ascon-Hash256 for Suite 2 */
+	if (alg == ASCON_HASH_256) {
+		if (crypto_hash(out->ptr, in->ptr, in->len) != 0) {
+			return sha_failed;
+		}
+		out->len = HASH_SIZE;
+		return ok;
+	}
+#endif
+
 	if (alg == SHA_256) {
 #ifdef TINYCRYPT
 		struct tc_sha256_state_struct s;

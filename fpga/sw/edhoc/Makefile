@@ -24,6 +24,11 @@ LDFLAGS += -Wl,--allow-multiple-definition
 # Use 'make EDHOC_MODE=psk' for PSK-only (default)
 EDHOC_MODE ?= psk
 
+# PSK mode uses smaller credential buffers for reduced stack/code size
+ifeq ($(EDHOC_MODE),psk)
+CFLAGS += -DEDHOC_PSK_ONLY
+endif
+
 ifeq ($(EDHOC_MODE),original)
     EDHOC_LIB_DIR = uoscore-uedhoc
 else
@@ -31,41 +36,38 @@ else
 endif
 
 INCLUDES = -I. -Iinclude -I$(EDHOC_LIB_DIR)/inc
+INCLUDES += -I$(EDHOC_LIB_DIR)/inc/common
 INCLUDES += -I$(EDHOC_LIB_DIR)/externals/zcbor/include
 INCLUDES += -I$(EDHOC_LIB_DIR)/externals/ascon-c/crypto_aead/asconaead128/asm_rv32i
-INCLUDES += -I$(EDHOC_LIB_DIR)/externals/tinycrypt/lib/include
+# Use bi32_lowsize for hash (32-bit optimized, no libgcc needed)
+INCLUDES += -I$(EDHOC_LIB_DIR)/externals/ascon-c/crypto_hash/asconhash256/bi32_lowsize
+INCLUDES += -I$(EDHOC_LIB_DIR)/externals/ascon-c/tests
 INCLUDES += -I$(EDHOC_LIB_DIR)/externals/compact25519/src
 
 C_SOURCES = src/main.c src/kprintf.c src/libc_stubs.c src/csprng_stub.c
 C_SOURCES += $(EDHOC_LIB_DIR)/externals/zcbor/src/zcbor_common.c
 C_SOURCES += $(EDHOC_LIB_DIR)/externals/zcbor/src/zcbor_encode.c
 C_SOURCES += $(EDHOC_LIB_DIR)/externals/zcbor/src/zcbor_decode.c
-ASCON_DIR = $(EDHOC_LIB_DIR)/externals/ascon-c/crypto_aead/asconaead128/asm_rv32i
-TINYCRYPT_DIR = $(EDHOC_LIB_DIR)/externals/tinycrypt/lib/source
-C_SOURCES += $(ASCON_DIR)/encrypt.c
-C_SOURCES += $(ASCON_DIR)/decrypt.c
-C_SOURCES += $(TINYCRYPT_DIR)/sha256.c
-C_SOURCES += $(TINYCRYPT_DIR)/hmac.c
-C_SOURCES += $(TINYCRYPT_DIR)/utils.c
-C_SOURCES += $(TINYCRYPT_DIR)/ecc.c
-C_SOURCES += $(TINYCRYPT_DIR)/ecc_dh.c
-# PSK mode: No signing needed, exclude ecc_dsa.c
-# C_SOURCES += $(TINYCRYPT_DIR)/ecc_dsa.c
-C_SOURCES += $(TINYCRYPT_DIR)/ecc_platform_specific.c
+ASCON_AEAD_DIR = $(EDHOC_LIB_DIR)/externals/ascon-c/crypto_aead/asconaead128/asm_rv32i
+ASCON_HASH_DIR = $(EDHOC_LIB_DIR)/externals/ascon-c/crypto_hash/asconhash256/bi32_lowsize
+# Ascon-AEAD128 (RV32I assembly - ~1.6KB)
+C_SOURCES += $(ASCON_AEAD_DIR)/encrypt.c
+C_SOURCES += $(ASCON_AEAD_DIR)/decrypt.c
+# Ascon-Hash256 (bi32_lowsize - 32-bit optimized, no libgcc, ~1.4KB)
+C_SOURCES += $(ASCON_HASH_DIR)/hash.c
+C_SOURCES += $(ASCON_HASH_DIR)/permutations.c
+C_SOURCES += $(ASCON_HASH_DIR)/interleave.c
+C_SOURCES += $(ASCON_HASH_DIR)/constants.c
+# Ascon-HMAC (built on Ascon-Hash256 for HKDF)
+C_SOURCES += $(EDHOC_LIB_DIR)/src/common/ascon_hmac.c
+# Compact25519 X25519 only (no Ed25519, no SHA-512)
 C_SOURCES += $(EDHOC_LIB_DIR)/externals/compact25519/src/compact_x25519.c
-# PSK mode: No EdDSA signing needed, exclude compact_ed25519.c
-# C_SOURCES += $(EDHOC_LIB_DIR)/externals/compact25519/src/compact_ed25519.c
 C_SOURCES += $(EDHOC_LIB_DIR)/externals/compact25519/src/compact_wipe.c
 C_SOURCES += $(EDHOC_LIB_DIR)/externals/compact25519/src/c25519/c25519.c
-# PSK mode: No Ed25519 signing needed, exclude ed25519.c and edsign.c
-# C_SOURCES += $(EDHOC_LIB_DIR)/externals/compact25519/src/c25519/ed25519.c
-# C_SOURCES += $(EDHOC_LIB_DIR)/externals/compact25519/src/c25519/edsign.c
 C_SOURCES += $(EDHOC_LIB_DIR)/externals/compact25519/src/c25519/f25519.c
 C_SOURCES += $(EDHOC_LIB_DIR)/externals/compact25519/src/c25519/fprime.c
-# PSK mode: No SHA-512 needed (used for Ed25519 signing only)
-# C_SOURCES += $(EDHOC_LIB_DIR)/externals/compact25519/src/c25519/sha512.c
 
-ASM_SOURCES = src/crt0.S $(ASCON_DIR)/ascon.S
+ASM_SOURCES = src/crt0.S $(ASCON_AEAD_DIR)/ascon.S
 LIBS = -L$(EDHOC_LIB_DIR)/build -luoscore-uedhoc
 
 OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(C_SOURCES:.c=.o)))
@@ -97,24 +99,25 @@ $(BUILD_DIR)/%.bin: $(BUILD_DIR)/%.elf
 $(BUILD_DIR):
 	@mkdir -p $@
 
-# EDHOC test targets
+# EDHOC test targets (Pure Ascon + Compact25519 X25519)
 edhoc_initiator: TARGET = edhoc_initiator
 edhoc_initiator: C_SOURCES = src/edhoc_initiator_suite0.c src/kprintf.c src/libc_stubs.c src/csprng_stub.c
 edhoc_initiator: C_SOURCES += $(EDHOC_LIB_DIR)/externals/zcbor/src/zcbor_common.c
 edhoc_initiator: C_SOURCES += $(EDHOC_LIB_DIR)/externals/zcbor/src/zcbor_encode.c
 edhoc_initiator: C_SOURCES += $(EDHOC_LIB_DIR)/externals/zcbor/src/zcbor_decode.c
-edhoc_initiator: C_SOURCES += $(ASCON_DIR)/encrypt.c $(ASCON_DIR)/decrypt.c
-edhoc_initiator: C_SOURCES += $(TINYCRYPT_DIR)/sha256.c $(TINYCRYPT_DIR)/hmac.c $(TINYCRYPT_DIR)/utils.c
-edhoc_initiator: C_SOURCES += $(TINYCRYPT_DIR)/ecc.c $(TINYCRYPT_DIR)/ecc_dh.c $(TINYCRYPT_DIR)/ecc_platform_specific.c
+# Ascon-AEAD (RV32I assembly)
+edhoc_initiator: C_SOURCES += $(ASCON_AEAD_DIR)/encrypt.c $(ASCON_AEAD_DIR)/decrypt.c
+# Ascon-Hash256 (bi32_lowsize - no libgcc)
+edhoc_initiator: C_SOURCES += $(ASCON_HASH_DIR)/hash.c $(ASCON_HASH_DIR)/permutations.c
+edhoc_initiator: C_SOURCES += $(ASCON_HASH_DIR)/interleave.c $(ASCON_HASH_DIR)/constants.c
+# Ascon-HMAC
+edhoc_initiator: C_SOURCES += $(EDHOC_LIB_DIR)/src/common/ascon_hmac.c
+# Compact25519 X25519 only (no Ed25519, no SHA-512)
 edhoc_initiator: C_SOURCES += $(EDHOC_LIB_DIR)/externals/compact25519/src/compact_x25519.c
-edhoc_initiator: C_SOURCES += $(EDHOC_LIB_DIR)/externals/compact25519/src/compact_ed25519.c
 edhoc_initiator: C_SOURCES += $(EDHOC_LIB_DIR)/externals/compact25519/src/compact_wipe.c
 edhoc_initiator: C_SOURCES += $(EDHOC_LIB_DIR)/externals/compact25519/src/c25519/c25519.c
-edhoc_initiator: C_SOURCES += $(EDHOC_LIB_DIR)/externals/compact25519/src/c25519/ed25519.c
-edhoc_initiator: C_SOURCES += $(EDHOC_LIB_DIR)/externals/compact25519/src/c25519/edsign.c
 edhoc_initiator: C_SOURCES += $(EDHOC_LIB_DIR)/externals/compact25519/src/c25519/f25519.c
 edhoc_initiator: C_SOURCES += $(EDHOC_LIB_DIR)/externals/compact25519/src/c25519/fprime.c
-edhoc_initiator: C_SOURCES += $(EDHOC_LIB_DIR)/externals/compact25519/src/c25519/sha512.c
 edhoc_initiator:
 	@echo "Building EDHOC library..."
 	@$(MAKE) -C $(EDHOC_LIB_DIR) clean
@@ -127,18 +130,19 @@ edhoc_responder: C_SOURCES = src/edhoc_responder_suite0.c src/kprintf.c src/libc
 edhoc_responder: C_SOURCES += $(EDHOC_LIB_DIR)/externals/zcbor/src/zcbor_common.c
 edhoc_responder: C_SOURCES += $(EDHOC_LIB_DIR)/externals/zcbor/src/zcbor_encode.c
 edhoc_responder: C_SOURCES += $(EDHOC_LIB_DIR)/externals/zcbor/src/zcbor_decode.c
-edhoc_responder: C_SOURCES += $(ASCON_DIR)/encrypt.c $(ASCON_DIR)/decrypt.c
-edhoc_responder: C_SOURCES += $(TINYCRYPT_DIR)/sha256.c $(TINYCRYPT_DIR)/hmac.c $(TINYCRYPT_DIR)/utils.c
-edhoc_responder: C_SOURCES += $(TINYCRYPT_DIR)/ecc.c $(TINYCRYPT_DIR)/ecc_dh.c $(TINYCRYPT_DIR)/ecc_platform_specific.c
+# Ascon-AEAD (RV32I assembly)
+edhoc_responder: C_SOURCES += $(ASCON_AEAD_DIR)/encrypt.c $(ASCON_AEAD_DIR)/decrypt.c
+# Ascon-Hash256 (bi32_lowsize - no libgcc)
+edhoc_responder: C_SOURCES += $(ASCON_HASH_DIR)/hash.c $(ASCON_HASH_DIR)/permutations.c
+edhoc_responder: C_SOURCES += $(ASCON_HASH_DIR)/interleave.c $(ASCON_HASH_DIR)/constants.c
+# Ascon-HMAC
+edhoc_responder: C_SOURCES += $(EDHOC_LIB_DIR)/src/common/ascon_hmac.c
+# Compact25519 X25519 only (no Ed25519, no SHA-512)
 edhoc_responder: C_SOURCES += $(EDHOC_LIB_DIR)/externals/compact25519/src/compact_x25519.c
-edhoc_responder: C_SOURCES += $(EDHOC_LIB_DIR)/externals/compact25519/src/compact_ed25519.c
 edhoc_responder: C_SOURCES += $(EDHOC_LIB_DIR)/externals/compact25519/src/compact_wipe.c
 edhoc_responder: C_SOURCES += $(EDHOC_LIB_DIR)/externals/compact25519/src/c25519/c25519.c
-edhoc_responder: C_SOURCES += $(EDHOC_LIB_DIR)/externals/compact25519/src/c25519/ed25519.c
-edhoc_responder: C_SOURCES += $(EDHOC_LIB_DIR)/externals/compact25519/src/c25519/edsign.c
 edhoc_responder: C_SOURCES += $(EDHOC_LIB_DIR)/externals/compact25519/src/c25519/f25519.c
 edhoc_responder: C_SOURCES += $(EDHOC_LIB_DIR)/externals/compact25519/src/c25519/fprime.c
-edhoc_responder: C_SOURCES += $(EDHOC_LIB_DIR)/externals/compact25519/src/c25519/sha512.c
 edhoc_responder:
 	@echo "Building EDHOC library..."
 	@$(MAKE) -C $(EDHOC_LIB_DIR) clean
