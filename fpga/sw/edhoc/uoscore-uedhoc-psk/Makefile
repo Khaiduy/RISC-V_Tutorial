@@ -38,9 +38,15 @@ C_SOURCES += $(wildcard src/common/*.c)
 # PSK-only: Exclude sig_structure encoder (only used by edhoc_cose.c)
 C_SOURCES += $(filter-out %oscore_% %edhoc_encode_data_2.c %edhoc_encode_sig_structure.c, $(wildcard src/cbor/*.c))
 
+# Ascon-AEAD sources (asm_rv32i - handcrafted RV32I assembly, ~1.6KB)
+C_SOURCES += externals/ascon-c/crypto_aead/asconaead128/asm_rv32i/encrypt.c
+C_SOURCES += externals/ascon-c/crypto_aead/asconaead128/asm_rv32i/decrypt.c
+ASM_SOURCES += externals/ascon-c/crypto_aead/asconaead128/asm_rv32i/ascon.S
+
 
 #$(info    \n C_SOURCES is $(C_SOURCES))
 vpath %.c $(sort $(dir $(C_SOURCES)))
+vpath %.S $(sort $(dir $(ASM_SOURCES)))
 
 ################################################################################
 # CFLAGS
@@ -152,6 +158,10 @@ endif
 ifeq ($(findstring TINYCRYPT,$(EXTENDED_CFLAGS)),TINYCRYPT)
 C_INCLUDES += -Iexternals/tinycrypt/lib/include
 endif
+
+ifeq ($(findstring ASCON,$(EXTENDED_CFLAGS)),ASCON)
+C_INCLUDES += -Iexternals/ascon-c/crypto_aead/asconaead128/asm_rv32i
+endif
  
 ifeq ($(findstring MBEDTLS,$(EXTENDED_CFLAGS)),MBEDTLS)
 C_INCLUDES += -Iexternals/mbedtls/library 
@@ -173,6 +183,7 @@ $(info    EXTENDED_CFLAGS are $(EXTENDED_CFLAGS))
 # build the library
 ################################################################################
 OBJ = $(addprefix $(DIR)/,$(notdir $(C_SOURCES:.c=.o)))
+OBJ += $(addprefix $(DIR)/,$(notdir $(ASM_SOURCES:.S=.o)))
 #$(info    \n OBJ is $(OBJ))
 
 
@@ -182,6 +193,10 @@ $(DIR)/$(LIB_NAME): $(OBJ)
 
 $(DIR)/%.o: %.c Makefile makefile_config.mk
 	@echo [Compile] $<
+	@$(CC) -c $(EXTENDED_CFLAGS) $< -o $@
+
+$(DIR)/%.o: %.S Makefile makefile_config.mk
+	@echo [Assemble] $<
 	@$(CC) -c $(EXTENDED_CFLAGS) $< -o $@
 
 clean:

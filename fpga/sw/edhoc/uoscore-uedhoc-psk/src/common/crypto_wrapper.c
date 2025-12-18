@@ -27,6 +27,24 @@
 #define X25519_KEY_SIZE 32
 #endif
 
+/* Ascon-AEAD support (RV32I assembly implementation) */
+#ifdef ASCON
+#include "api.h"  /* Defines CRYPTO_KEYBYTES, CRYPTO_NPUBBYTES, CRYPTO_ABYTES */
+
+/* Declare crypto_aead functions from asm_rv32i implementation */
+int crypto_aead_encrypt(unsigned char* c, unsigned long long* clen,
+                        const unsigned char* m, unsigned long long mlen,
+                        const unsigned char* ad, unsigned long long adlen,
+                        const unsigned char* nsec, const unsigned char* npub,
+                        const unsigned char* k);
+
+int crypto_aead_decrypt(unsigned char* m, unsigned long long* mlen,
+                        unsigned char* nsec, const unsigned char* c,
+                        unsigned long long clen, const unsigned char* ad,
+                        unsigned long long adlen, const unsigned char* npub,
+                        const unsigned char* k);
+#endif
+
 #ifdef EDHOC_MOCK_CRYPTO_WRAPPER
 struct edhoc_mock_cb edhoc_crypto_mock_cb;
 #endif // EDHOC_MOCK_CRYPTO_WRAPPER
@@ -330,11 +348,76 @@ enum err WEAK aead(enum aes_operation op, const struct byte_array *in,
 	// if no mocked data has been found - continue with normal aead
 #endif
 
-#if defined(TINYCRYPT)
+#if defined(ASCON)
+	/* Ascon-AEAD-128 backend (RV32I assembly implementation) */
+#ifdef DEBUG_PRINT
+	kprintf("\r\n[CRYPTO] Using ASCON-AEAD-128 (RV32I assembly)\r\n");
+	PRINT_ARRAY("[ASCON] Key", key->ptr, key->len);
+	PRINT_ARRAY("[ASCON] Nonce", nonce->ptr, nonce->len);
+#endif
+	
+	if (key->len != 16) {
+		kprintf("[ASCON] ERROR: Key must be 16 bytes, got %d\r\n", key->len);
+		return unexpected_result_from_ext_lib;
+	}
+	if (nonce->len != 16) {
+		kprintf("[ASCON] ERROR: Nonce must be 16 bytes, got %d\r\n", nonce->len);
+		return unexpected_result_from_ext_lib;
+	}
+	if (tag->len != 16) {
+		kprintf("[ASCON] ERROR: Tag must be 16 bytes, got %d\r\n", tag->len);
+		return unexpected_result_from_ext_lib;
+	}
+
+	if (op == DECRYPT) {
+#ifdef DEBUG_PRINT
+		kprintf("[ASCON] DECRYPT: ciphertext+tag_len=%d, aad_len=%d\r\n",
+		        in->len, aad->len);
+		PRINT_ARRAY("[ASCON-DEC] Ciphertext+Tag", in->ptr, in->len);
+		PRINT_ARRAY("[ASCON-DEC] AAD", aad->ptr, aad->len);
+#endif
+		/* crypto_aead_decrypt expects ciphertext+tag concatenated */
+		unsigned long long mlen;
+		int result = crypto_aead_decrypt(out->ptr, &mlen, NULL,
+		                                 in->ptr, in->len,
+		                                 aad->ptr, aad->len,
+		                                 nonce->ptr, key->ptr);
+#ifdef DEBUG_PRINT
+		kprintf("[ASCON] crypto_aead_decrypt returned: %d (0=success), mlen=%llu\r\n", result, mlen);
+		if (result == 0 && mlen > 0) {
+			PRINT_ARRAY("[ASCON-DEC] Decrypted plaintext", out->ptr, (uint32_t)mlen);
+		}
+#endif
+		TRY_EXPECT(result, 0);  /* Ascon returns 0 on success */
+
+	} else {
+#ifdef DEBUG_PRINT
+		kprintf("[ASCON] ENCRYPT: plaintext_len=%d, aad_len=%d\r\n",
+		        in->len, aad->len);
+		PRINT_ARRAY("[ASCON-ENC] Plaintext", in->ptr, in->len);
+		PRINT_ARRAY("[ASCON-ENC] AAD", aad->ptr, aad->len);
+#endif
+		/* crypto_aead_encrypt writes ciphertext+tag concatenated */
+		unsigned long long clen;
+		int result = crypto_aead_encrypt(out->ptr, &clen, in->ptr, in->len,
+		                                 aad->ptr, aad->len, NULL,
+		                                 nonce->ptr, key->ptr);
+#ifdef DEBUG_PRINT
+		kprintf("[ASCON] crypto_aead_encrypt returned: %d (0=success), clen=%llu\r\n", result, clen);
+		if (result == 0) {
+			PRINT_ARRAY("[ASCON-ENC] Ciphertext+Tag", out->ptr, (uint32_t)clen);
+		}
+#endif
+		TRY_EXPECT(result, 0);  /* Ascon returns 0 on success */
+	}
+	return ok;
+
+#elif defined(TINYCRYPT)
 	struct tc_ccm_mode_struct c;
 	struct tc_aes_key_sched_struct sched;
 	
 #ifdef DEBUG_PRINT
+	kprintf("\r\n[CRYPTO] Using AES-CCM (TinyCrypt)\r\n");
 	PRINT_ARRAY("[CRYPTO] Key", key->ptr, key->len);
 #endif
 	TRY_EXPECT(tc_aes128_set_encrypt_key(&sched, key->ptr), 1);

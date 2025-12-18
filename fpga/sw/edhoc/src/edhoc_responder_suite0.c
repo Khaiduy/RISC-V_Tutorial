@@ -104,7 +104,7 @@ static uint8_t g_y[32]; // G_Y will be computed from y_r
 // PSK Mode (Method 4) configuration - Suite 0
 // C_R = 14 (CBOR: 0x0e)
 static const uint8_t c_r[] = {0x0e};
-static const uint8_t suites[] = {0x00}; // Suite 0
+static const uint8_t suites[] = {0x02}; // Suite 1: AES-CCM-16-128-128 (Tag=16)
 
 // PSK credentials for Suite 0 (AES-CCM-16-64-128) - MUST match initiator
 static const uint8_t psk[] = {0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0a,0x0b,0x0c,0x0d,0x0e,0x0f,0x10};

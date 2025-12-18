@@ -27,6 +27,7 @@ enum suite_label {
 enum aead_alg {
 	AES_CCM_16_64_128 = 10,
 	AES_CCM_16_128_128 = 30,
+	ASCON_AEAD_128 = 32,  /* Ascon-AEAD-128: 16-byte key, 16-byte nonce, 16-byte tag */
 };
 
 enum hash_alg { SHA_256 = -16 };

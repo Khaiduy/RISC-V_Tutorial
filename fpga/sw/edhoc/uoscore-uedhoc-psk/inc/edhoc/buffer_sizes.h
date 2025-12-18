@@ -59,7 +59,7 @@
 #define ECDH_SECRET_SIZE 32
 #define PRK_SIZE 32
 #define HASH_SIZE 32
-#define AEAD_IV_SIZE 13
+#define AEAD_IV_SIZE 16  /* Maximum nonce size: Ascon=16, AES-CCM=13 */
 #define MAC_SIZE 16
 #define MAC23_SIZE 32
 #define AAD_SIZE 45
@@ -82,7 +82,7 @@
 #define CIPHERTEXT3_SIZE PLAINTEXT3_SIZE + MAC_SIZE
 
 #define PLAINTEXT4_SIZE EAD_SIZE + COSE_ENC0_STR_LEN
-#define CIPHERTEXT4_SIZE PLAINTEXT4_SIZE
+#define CIPHERTEXT4_SIZE PLAINTEXT4_SIZE + MAC_SIZE
 
 #define MSG_1_SIZE                                                             \
 	(1 + SUITES_I_SIZE + G_X_SIZE + AS_BSTR_SIZE(C_I_SIZE) + EAD_SIZE)

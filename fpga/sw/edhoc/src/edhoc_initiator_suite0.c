@@ -101,9 +101,9 @@ static const uint8_t x_i[] = {
 // Public keys (to be computed from private keys using software X25519)
 static uint8_t g_x[32]; // G_X will be computed from x_i
 
-// PSK Mode (Method 4) configuration - Suite 0
+// PSK Mode (Method 4) configuration - Suite 1 (AES-CCM-16-128-128, 16-byte tag)
 static const uint8_t c_i[] = {0x2d}; // C_I = -14 (0x2d in CBOR)
-static const uint8_t suites[] = {0x00}; // Suite 0
+static const uint8_t suites[] = {0x02}; // Suite 1: AES-CCM-16-128-128 (Tag=16)
 
 // PSK credentials for Suite 0 (AES-CCM-16-64-128)
 static const uint8_t psk[] = {0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0a,0x0b,0x0c,0x0d,0x0e,0x0f,0x10};
