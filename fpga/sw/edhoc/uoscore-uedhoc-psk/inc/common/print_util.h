@@ -78,14 +78,18 @@ static const char external_runtime_error_message[] = {
 };
 
 #define PRINT_ARRAY(msg, a, a_len)                                             \
-	kprintf(msg);                                                          \
+	kprintf(msg);                                                            \
+	kprintf("\r\n");                                                         \
 	print_array(a, a_len);
 #define PRINT_MSG(msg) kprintf(msg);
 #define PRINTF(f_, ...) kprintf((f_), ##__VA_ARGS__);
 #else
-#define PRINT_ARRAY(msg, a, a_len) do { (void)(msg); (void)(a); (void)(a_len); } while(0)
-#define PRINT_MSG(msg) do { (void)(msg); } while(0)
-#define PRINTF(f_, ...) do { } while(0)
+#define PRINT_ARRAY(msg, a, a_len)                                             \
+	kprintf(msg);                                                            \
+	kprintf("\r\n");                                                         \
+	print_array(a, a_len);
+#define PRINT_MSG(msg) kprintf(msg);
+#define PRINTF(f_, ...) kprintf((f_), ##__VA_ARGS__);
 #endif
 
 #endif

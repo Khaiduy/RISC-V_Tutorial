@@ -17,11 +17,13 @@
 #include "common/byte_array.h"
 #include "common/print_util.h"
 
-#ifdef DEBUG_PRINT
+/* Error message strings - always defined for PRINT_MSG to work */
 static const char msg_interaction_not_found[] =
 	"Couldn't find the interaction with given key.\r\n";
 static const char msg_token_already_used[] =
 	"Given token is already used by other interaction (index=%u).\r\n";
+
+#ifdef DEBUG_PRINT
 
 /**
  * @brief Print single interaction field.

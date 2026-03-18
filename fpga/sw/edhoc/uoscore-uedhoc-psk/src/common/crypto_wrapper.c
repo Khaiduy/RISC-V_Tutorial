@@ -27,11 +27,11 @@
 #define X25519_KEY_SIZE 32
 #endif
 
-/* Ascon-AEAD support (RV32I assembly implementation) */
 #ifdef ASCON
+/* Ascon-AEAD support (RV32I assembly implementation) */
 #include "api.h"  /* Defines CRYPTO_KEYBYTES, CRYPTO_NPUBBYTES, CRYPTO_ABYTES */
 
-/* Declare crypto_aead functions from asm_rv32i implementation */
+/* Declare crypto_aead functions from opt32 implementation */
 int crypto_aead_encrypt(unsigned char* c, unsigned long long* clen,
                         const unsigned char* m, unsigned long long mlen,
                         const unsigned char* ad, unsigned long long adlen,
@@ -43,6 +43,14 @@ int crypto_aead_decrypt(unsigned char* m, unsigned long long* mlen,
                         unsigned long long clen, const unsigned char* ad,
                         unsigned long long adlen, const unsigned char* npub,
                         const unsigned char* k);
+
+/* Wrapper to reduce parameter passing issues on bare-metal RV32I */
+static int ascon_decrypt_wrapper(unsigned char* m, unsigned long long* mlen,
+                                  const unsigned char* c, unsigned long long clen,
+                                  const unsigned char* ad, unsigned long long adlen,
+                                  const unsigned char* npub, const unsigned char* k) {
+	return crypto_aead_decrypt(m, mlen, NULL, c, clen, ad, adlen, npub, k);
+}
 
 /* Ascon-Hash256 (bi32_lowsize) and Ascon-HMAC */
 #include "crypto_hash.h"    /* bi32_lowsize crypto_hash() */
@@ -79,7 +87,23 @@ modify setting in include/psa/crypto_config.h
 #ifdef COMPACT25519
 #include <c25519.h>
 #include <edsign.h>
-#include <compact_x25519.h>
+//#include <compact_x25519.h>
+#endif
+
+#if defined(MONOCYPHER)
+#include <monocypher.h>
+#include "optional/monocypher-ed25519.h"
+#endif
+
+#ifdef COMPACT25519
+#ifdef CURVE25519_DONNA
+extern int curve25519_donna(uint8_t *mypublic, const uint8_t *secret, const uint8_t *basepoint);
+#endif
+
+#ifdef CURVE25519_DONNA
+extern int curve25519_donna(uint8_t *mypublic, const uint8_t *secret, const uint8_t *basepoint);
+#endif
+
 #endif
 
 #ifdef TINYCRYPT
@@ -353,9 +377,9 @@ enum err WEAK aead(enum aes_operation op, const struct byte_array *in,
 #endif
 
 #if defined(ASCON)
-	/* Ascon-AEAD-128 backend (RV32I assembly implementation) */
+	/* Ascon-AEAD-128 backend (opt32 C implementation for debugging) */
 #ifdef DEBUG_PRINT
-	kprintf("\r\n[CRYPTO] Using ASCON-AEAD-128 (RV32I assembly)\r\n");
+	kprintf("\r\n[CRYPTO] Using ASCON-AEAD-128 (opt32 C)\r\n");
 	PRINT_ARRAY("[ASCON] Key", key->ptr, key->len);
 	PRINT_ARRAY("[ASCON] Nonce", nonce->ptr, nonce->len);
 #endif
@@ -379,13 +403,14 @@ enum err WEAK aead(enum aes_operation op, const struct byte_array *in,
 		        in->len, aad->len);
 		PRINT_ARRAY("[ASCON-DEC] Ciphertext+Tag", in->ptr, in->len);
 		PRINT_ARRAY("[ASCON-DEC] AAD", aad->ptr, aad->len);
+		kprintf("[ASCON] About to call crypto_aead_decrypt()...\r\n");
 #endif
 		/* crypto_aead_decrypt expects ciphertext+tag concatenated */
 		unsigned long long mlen;
-		int result = crypto_aead_decrypt(out->ptr, &mlen, NULL,
-		                                 in->ptr, in->len,
-		                                 aad->ptr, aad->len,
-		                                 nonce->ptr, key->ptr);
+		int result = ascon_decrypt_wrapper(out->ptr, &mlen,
+		                                    in->ptr, in->len,
+		                                    aad->ptr, aad->len,
+		                                    nonce->ptr, key->ptr);
 #ifdef DEBUG_PRINT
 		kprintf("[ASCON] crypto_aead_decrypt returned: %d (0=success), mlen=%llu\r\n", result, mlen);
 		if (result == 0 && mlen > 0) {
@@ -563,11 +588,14 @@ enum err WEAK sign(enum sign_alg alg, const struct byte_array *sk,
 #endif // EDHOC_MOCK_CRYPTO_WRAPPER
 
 	if (alg == EdDSA) {
-#if defined(COMPACT25519)
-		edsign_sign(out, pk->ptr, sk->ptr, msg->ptr, msg->len);
-		return ok;
+#if defined(MONOCYPHER)
+                crypto_eddsa_sign(out, sk->ptr, msg->ptr, msg->len);
+                return ok;
+#elif defined(COMPACT25519)
+                edsign_sign(out, pk->ptr, sk->ptr, msg->ptr, msg->len);
+                return ok;
 #endif
-	} else if (alg == ES256) {
+        } else if (alg == ES256) {
 #if defined(TINYCRYPT)
 
 		uECC_Curve p256 = uECC_secp256r1();
@@ -724,6 +752,7 @@ enum err WEAK hkdf_extract(enum hash_alg alg, const struct byte_array *salt,
 #ifdef ASCON
 	/* Ascon-HMAC for Suite 2 (Ascon-Hash256) */
 	if (alg == ASCON_HASH_256) {
+		// PRINTF("[HKDF_EXTRACT] Using Ascon-HMAC\r\n");
 		uint8_t zero_salt[32] = { 0 };
 		const uint8_t *key;
 		unsigned long long key_len;
@@ -735,10 +764,12 @@ enum err WEAK hkdf_extract(enum hash_alg alg, const struct byte_array *salt,
 			key = salt->ptr;
 			key_len = salt->len;
 		}
-		
+		// PRINTF("[HKDF_EXTRACT] Calling ascon_hmac...\r\n");
 		if (ascon_hmac(key, key_len, ikm->ptr, ikm->len, out) != 0) {
+			// PRINTF("[HKDF_EXTRACT] ascon_hmac FAILED!\r\n");
 			return hkdf_failed;
 		}
+		// PRINTF("[HKDF_EXTRACT] ascon_hmac OK\r\n");
 		return ok;
 	}
 #endif
@@ -807,11 +838,14 @@ enum err WEAK hkdf_expand(enum hash_alg alg, const struct byte_array *prk,
 #ifdef ASCON
 	/* Ascon-HMAC for Suite 2 (Ascon-Hash256) */
 	if (alg == ASCON_HASH_256) {
+		// PRINTF("[HKDF_EXPAND] Using Ascon-HMAC, iterations=%d\r\n", (int)iterations);
 		uint8_t t[32] = { 0 };
 		ascon_hmac_state_t h;
 		
 		for (uint8_t i = 1; i <= iterations; i++) {
+			// PRINTF("[HKDF_EXPAND] iter %d: init...\r\n", i);
 			if (ascon_hmac_init(&h, prk->ptr, prk->len) != 0) {
+				// PRINTF("[HKDF_EXPAND] init FAILED\r\n");
 				return hkdf_failed;
 			}
 			if (i > 1) {
@@ -819,12 +853,14 @@ enum err WEAK hkdf_expand(enum hash_alg alg, const struct byte_array *prk,
 					return hkdf_failed;
 				}
 			}
+			// PRINTF("[HKDF_EXPAND] iter %d: update info...\r\n", i);
 			if (ascon_hmac_update(&h, info->ptr, info->len) != 0) {
 				return hkdf_failed;
 			}
 			if (ascon_hmac_update(&h, &i, 1) != 0) {
 				return hkdf_failed;
 			}
+			// PRINTF("[HKDF_EXPAND] iter %d: final...\r\n", i);
 			if (ascon_hmac_final(&h, t) != 0) {
 				return hkdf_failed;
 			}
@@ -834,6 +870,7 @@ enum err WEAK hkdf_expand(enum hash_alg alg, const struct byte_array *prk,
 				memcpy(&out->ptr[(i - 1) * 32], t, 32);
 			}
 		}
+		// PRINTF("[HKDF_EXPAND] Complete\r\n");
 		return ok;
 	}
 #endif
@@ -868,7 +905,7 @@ enum err WEAK hkdf_expand(enum hash_alg alg, const struct byte_array *prk,
 	psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
 	psa_key_id_t key_id = PSA_KEY_HANDLE_INIT;
 #ifdef DEBUG_PRINT
-	PRINTF("key_id: %d\r\n", key_id);
+	// PRINTF("key_id: %d\r\n", key_id);
 #endif
 
 	TRY_EXPECT_PSA(psa_crypto_init(), PSA_SUCCESS, key_id,
@@ -925,6 +962,22 @@ enum err WEAK hkdf_sha_256(struct byte_array *master_secret,
 	return ok;
 }
 
+#ifdef ASCON
+enum err WEAK hkdf_ascon(struct byte_array *master_secret,
+			 struct byte_array *master_salt,
+			 struct byte_array *info, struct byte_array *out)
+{
+	// PRINTF("[HKDF_ASCON] Starting...\r\n");
+	BYTE_ARRAY_NEW(prk, HASH_SIZE, HASH_SIZE);
+	// PRINTF("[HKDF_ASCON] Calling hkdf_extract...\r\n");
+	TRY(hkdf_extract(ASCON_HASH_256, master_salt, master_secret, prk.ptr));
+	// PRINTF("[HKDF_ASCON] hkdf_extract done, calling hkdf_expand...\r\n");
+	TRY(hkdf_expand(ASCON_HASH_256, &prk, info, out));
+	// PRINTF("[HKDF_ASCON] Complete\r\n");
+	return ok;
+}
+#endif
+
 enum err WEAK shared_secret_derive(enum ecdh_alg alg,
 				   const struct byte_array *sk,
 				   const struct byte_array *pk,
@@ -939,13 +992,28 @@ enum err WEAK shared_secret_derive(enum ecdh_alg alg,
 		hw_x25519_compute(sk->ptr, pk->ptr, shared_secret);
 		// kprintf("[CRYPTO] X25519 complete\r\n");
 		return ok;
+#elif defined(MONOCYPHER)
+		crypto_x25519(shared_secret, sk->ptr, pk->ptr);
+		return ok;
+#elif defined(MONOCYPHER)
+		crypto_x25519(shared_secret, sk->ptr, pk->ptr);
+		return ok;
 #elif defined(COMPACT25519)
 		// Software fallback
 		// kprintf("[CRYPTO] Using SW X25519 (COMPACT25519)\r\n");
 		uint8_t e[F25519_SIZE];
 		f25519_copy(e, sk->ptr);
-		c25519_prepare(e);
-		c25519_smult(shared_secret, pk->ptr, e);
+#ifdef CURVE25519_DONNA
+e[0] &= 0xf8;
+e[31] &= 0x7f;
+e[31] |= 0x40;
+curve25519_donna(shared_secret, e, pk->ptr);
+#else
+c25519_prepare(e);
+#endif
+#ifndef CURVE25519_DONNA
+c25519_smult(shared_secret, pk->ptr, e);
+#endif
 		// kprintf("[CRYPTO] X25519 shared secret computed\r\n");
 		return ok;
 #else
@@ -1095,9 +1163,26 @@ enum err WEAK ephemeral_dh_key_gen(enum ecdh_alg alg, uint32_t seed,
 		hw_x25519_compute(sk->ptr, base_point, pk->ptr);
 		pk->len = X25519_KEY_SIZE;
 		// kprintf("[CRYPTO] Ephemeral keypair generated\r\n");
+#elif defined(MONOCYPHER)
+                // Software fallback - Monocypher
+                memcpy(sk->ptr, extended_seed, 32);
+                sk->ptr[0] &= 0xf8;
+                sk->ptr[31] &= 0x7f;
+                sk->ptr[31] |= 0x40;
+                crypto_x25519_public_key(pk->ptr, sk->ptr);
+
 #elif defined(COMPACT25519)
-		// Software fallback
-		compact_x25519_keygen(sk->ptr, pk->ptr, extended_seed);
+                // Software fallback
+#ifdef CURVE25519_DONNA
+const uint8_t basepoint[32] = {9};
+memcpy(sk->ptr, extended_seed, 32);
+sk->ptr[0] &= 0xf8;
+sk->ptr[31] &= 0x7f;
+sk->ptr[31] |= 0x40;
+curve25519_donna(pk->ptr, sk->ptr, basepoint);
+#else
+compact_x25519_keygen(sk->ptr, pk->ptr, extended_seed);
+#endif
 		pk->len = X25519_KEY_SIZE;
 		sk->len = X25519_KEY_SIZE;
 #else
@@ -1188,10 +1273,12 @@ enum err WEAK hash(enum hash_alg alg, const struct byte_array *in,
 #ifdef ASCON
 	/* Ascon-Hash256 for Suite 2 */
 	if (alg == ASCON_HASH_256) {
+		PRINT_ARRAY("[HASH-IN] Input data", in->ptr, in->len);
 		if (crypto_hash(out->ptr, in->ptr, in->len) != 0) {
 			return sha_failed;
 		}
 		out->len = HASH_SIZE;
+		PRINT_ARRAY("[HASH-OUT] Output hash", out->ptr, out->len);
 		return ok;
 	}
 #endif
@@ -1221,3 +1308,4 @@ enum err WEAK hash(enum hash_alg alg, const struct byte_array *in,
 
 	return crypto_operation_not_implemented;
 }
+

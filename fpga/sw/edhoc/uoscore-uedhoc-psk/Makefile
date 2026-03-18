@@ -31,17 +31,38 @@ $(shell mkdir -p $(DIR))
 # PSK-only: Exclude signature_or_mac_msg.c (Method 0-3 MAC/signature verification)
 # PSK-only: Exclude cert.c, edhoc_cose.c, associated_data_encode.c (dead code after PSK refactoring)
 C_SOURCES += $(filter-out %signature_or_mac_msg.c %cert.c %edhoc_cose.c %associated_data_encode.c, $(wildcard src/edhoc/*.c))
-# OSCORE REMOVED - Not needed for EDHOC-only implementation
-# C_SOURCES += $(wildcard src/oscore/*.c)
-C_SOURCES += $(wildcard src/common/*.c)
-# PSK-only: Exclude OSCORE, DATA_2, sig_structure, and cert CBOR encoders/decoders
-# These are only used for certificate-based Method 0-3
-C_SOURCES += $(filter-out %oscore_% %edhoc_encode_data_2.c %edhoc_encode_sig_structure.c %edhoc_decode_cert.c, $(wildcard src/cbor/*.c))
+# OSCORE enabled for deriving application keys
+C_SOURCES += $(wildcard src/oscore/*.c)
 
-# Ascon-AEAD sources (asm_rv32i - handcrafted RV32I assembly, ~1.6KB)
-C_SOURCES += externals/ascon-c/crypto_aead/asconaead128/asm_rv32i/encrypt.c
-C_SOURCES += externals/ascon-c/crypto_aead/asconaead128/asm_rv32i/decrypt.c
-ASM_SOURCES += externals/ascon-c/crypto_aead/asconaead128/asm_rv32i/ascon.S
+# Common sources - conditionally include ascon_hmac.c only for Ascon suite
+ifeq ($(filter $(CRYPTO_SUITE),0 1),$(CRYPTO_SUITE))
+# Suite 0/1: TinyCrypt - exclude ascon_hmac.c
+C_SOURCES += $(filter-out %ascon_hmac.c, $(wildcard src/common/*.c))
+else ifeq ($(CRYPTO_SUITE),7)
+# Suite 7: Ascon - include all common sources including ascon_hmac.c
+C_SOURCES += $(wildcard src/common/*.c)
+endif
+
+# PSK-only: Exclude DATA_2, sig_structure, and cert CBOR encoders/decoders
+# These are only used for certificate-based Method 0-3
+# Include OSCORE CBOR encoders for deriving application keys
+C_SOURCES += $(filter-out %edhoc_encode_data_2.c %edhoc_encode_sig_structure.c %edhoc_decode_cert.c, $(wildcard src/cbor/*.c))
+
+# Suite-specific crypto sources
+ifeq ($(filter $(CRYPTO_SUITE),0 1),$(CRYPTO_SUITE))
+# Suite 0/1: TinyCrypt (AES-CCM + HMAC-SHA256)
+C_SOURCES += externals/tinycrypt/lib/source/aes_encrypt.c
+C_SOURCES += externals/tinycrypt/lib/source/ccm_mode.c
+C_SOURCES += externals/tinycrypt/lib/source/sha256.c
+C_SOURCES += externals/tinycrypt/lib/source/hmac.c
+C_SOURCES += externals/tinycrypt/lib/source/utils.c
+ASM_SOURCES =
+else ifeq ($(CRYPTO_SUITE),7)
+# Suite 7: Ascon (ref - reference implementation, pure C with inline permutations)
+# This avoids linker conflicts between AEAD and Hash P() functions
+C_SOURCES += externals/ascon-c/crypto_aead/asconaead128/ref/aead.c
+# Hash is built separately (already uses bi32_lowsize, library handles)
+endif
 
 
 #$(info    \n C_SOURCES is $(C_SOURCES))
@@ -62,7 +83,8 @@ EXTENDED_CFLAGS += $(FEATURES)
 EXTENDED_CFLAGS += $(FEATURES)
 EXTENDED_CFLAGS += $(ARCH)
 EXTENDED_CFLAGS += $(OPT)
-# EXTENDED_CFLAGS += $(DEBUG_PRINT)
+EXTENDED_CFLAGS += $(DEBUG_PRINT)
+EXTENDED_CFLAGS += $(TIMING_PRINT)
 EXTENDED_CFLAGS += $(CBOR_ENGINE)
 EXTENDED_CFLAGS += $(OSCORE_NVM_SUPPORT)
 EXTENDED_CFLAGS += $(CRYPTO_ENGINE)
@@ -154,8 +176,8 @@ C_INCLUDES += -Iinc
 
 # Crypto engine
 ifeq ($(findstring COMPACT25519,$(EXTENDED_CFLAGS)),COMPACT25519) 
-C_INCLUDES += -Iexternals/compact25519/src/c25519/ 
-C_INCLUDES += -Iexternals/compact25519/src/ 
+ 
+ 
 endif
 
 ifeq ($(findstring TINYCRYPT,$(EXTENDED_CFLAGS)),TINYCRYPT)
@@ -163,9 +185,11 @@ C_INCLUDES += -Iexternals/tinycrypt/lib/include
 endif
 
 ifeq ($(findstring ASCON,$(EXTENDED_CFLAGS)),ASCON)
-C_INCLUDES += -Iexternals/ascon-c/crypto_aead/asconaead128/asm_rv32i
-# Use bi32_lowsize for hash (32-bit optimized, no libgcc needed)
-C_INCLUDES += -Iexternals/ascon-c/crypto_hash/asconhash256/bi32_lowsize
+# Use ref (reference) implementation - pure C with inline permutations
+# Avoids linker conflicts between AEAD and Hash P() functions
+C_INCLUDES += -Iexternals/ascon-c/crypto_aead/asconaead128/ref
+# Use ref for hash too to match
+C_INCLUDES += -Iexternals/ascon-c/crypto_hash/asconhash256/ref
 C_INCLUDES += -Iexternals/ascon-c/tests
 C_INCLUDES += -Iinc/common
 endif

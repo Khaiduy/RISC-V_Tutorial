@@ -95,8 +95,8 @@ enum err byte_array_cpy(struct byte_array *dest, const struct byte_array *src,
 	if (SIZE < 0 || SIZE > BUF_SIZE) {                                     \
 		return vla_insufficient_size;                                  \
 	}                                                                      \
-	struct byte_array NAME;                                                \
-	uint8_t NAME##_buf[SIZE];                                              \
+	struct byte_array NAME __attribute__((aligned(8)));                                                \
+	uint8_t NAME##_buf[SIZE] __attribute__((aligned(8)));                                              \
 	if (SIZE == 0) {                                                       \
 		NAME = NULL_ARRAY;                                             \
 	} else {                                                               \
@@ -107,8 +107,8 @@ enum err byte_array_cpy(struct byte_array *dest, const struct byte_array *src,
 #else
 #define BYTE_ARRAY_NEW(NAME, BUF_SIZE, SIZE)                                   \
 	TRY(check_buffer_size(BUF_SIZE, SIZE));                                \
-	struct byte_array NAME;                                                \
-	uint8_t NAME##_buf[BUF_SIZE];                                          \
+	struct byte_array NAME __attribute__((aligned(8)));                                                \
+	uint8_t NAME##_buf[BUF_SIZE] __attribute__((aligned(8)));                                          \
 	if (SIZE == 0) {                                                       \
 		NAME = NULL_ARRAY;                                             \
 	} else {                                                               \

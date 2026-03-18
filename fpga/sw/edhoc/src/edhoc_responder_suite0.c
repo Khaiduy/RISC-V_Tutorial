@@ -7,7 +7,9 @@
 #include "edhoc.h"
 #include "edhoc/edhoc_method_type.h"
 #include "edhoc/suites.h"
+#include "oscore.h"
 #include "compact_x25519.h"
+#include "x25519.h"
 
 #define UART1_BASE 0x64003000UL
 #define REG32_UART1(i) (((volatile uint32_t *)UART1_BASE)[(i) >> 2])
@@ -94,17 +96,28 @@ enum err ead_process(void *params, struct byte_array *ead) { return ok; }
 // Test vectors from draft-ietf-lake-edhoc-psk-06 Appendix
 // Y (Responder's ephemeral private key)
 static const uint8_t y_r[] = {
-    0xfd,0x8c,0xd8,0x77,0xc9,0xea,0x38,0x16,0xb7,0x82,0x9a,0xf5,0xa4,0x6a,0x12,0xc6,
-    0xf7,0x86,0x78,0x72,0x39,0xba,0x23,0x6f,0xf8,0x81,0x28,0x3a,0xc6,0xd4,0x4d,0x67
+    0xfb,0xfa,0xc8,0xdb,0x1d,0xc9,0xb2,0x57,0x14,0x4a,0xba,0xad,0x5a,0x1a,0x69,0xb7,
+    0xa7,0xf6,0x66,0x12,0xc4,0xb7,0x13,0x1f,0x7b,0x15,0x58,0x56,0x16,0xd6,0x19,0x47
 };
 
 // Public keys (to be computed from private keys using software X25519)
 static uint8_t g_y[32]; // G_Y will be computed from y_r
 
-// PSK Mode (Method 4) configuration - Suite 0
+// PSK Mode (Method 4) configuration
 // C_R = 14 (CBOR: 0x0e)
 static const uint8_t c_r[] = {0x0e};
-static const uint8_t suites[] = {0x02}; // Suite 1: AES-CCM-16-128-128 (Tag=16)
+
+// Suite selection based on CRYPTO_SUITE Makefile option:
+//   CRYPTO_SUITE=0: Suite 0 - AES-CCM-16-64-128 (8-byte tag, 13-byte nonce)
+//   CRYPTO_SUITE=1: Suite 1 - AES-CCM-16-128-128 (16-byte tag, 13-byte nonce)
+//   CRYPTO_SUITE=7: Suite 7 - Ascon-AEAD-128 (16-byte tag, 16-byte nonce)
+#if EDHOC_CRYPTO_SUITE == 0
+static const uint8_t suites[] = {0x00}; // Suite 0: AES-CCM-16-64-128
+#elif EDHOC_CRYPTO_SUITE == 1
+static const uint8_t suites[] = {0x01}; // Suite 1: AES-CCM-16-128-128
+#elif EDHOC_CRYPTO_SUITE == 7
+static const uint8_t suites[] = {0x07}; // Suite 7: Ascon-AEAD-128
+#endif
 
 // PSK credentials for Suite 0 (AES-CCM-16-64-128) - MUST match initiator
 static const uint8_t psk[] = {0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0a,0x0b,0x0c,0x0d,0x0e,0x0f,0x10};
@@ -112,21 +125,24 @@ static const uint8_t psk[] = {0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x0a,
 // ID_CRED_PSK = {4: h'32'} - identifies the PSK
 static const uint8_t id_cred_psk[] = {0xa1,0x04,0x41,0x32}; // {4: h'32'}
 
-// CRED_I: CWT Claims Set for Initiator (39 bytes) - MUST match initiator
-// {2: "initiator", 8: {1: {1: 4, 2: h'32', -1: <PSK>}}}
+// CRED_I: CWT Claims Set for Initiator (38 bytes) - MUST match initiator
+// {2: "initiatr", 8: {1: {1: 4, 2: h'32', -1: <PSK>}}}
 static const uint8_t cred_i[] = {
-    0xa2,0x02,0x69,0x69,0x6e,0x69,0x74,0x69,0x61,0x74,0x6f,0x72,0x08,0xa1,0x01,0xa3,
+    0xa2,0x02,0x68,0x69,0x6e,0x69,0x74,0x69,0x61,0x74,0x72,0x08,0xa1,0x01,0xa3,
     0x01,0x04,0x02,0x41,0x32,0x20,0x50,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,
     0x0a,0x0b,0x0c,0x0d,0x0e,0x0f,0x10
 };
 
-// CRED_R: CWT Claims Set for Responder (39 bytes) - MUST match initiator
-// {2: "responder", 8: {1: {1: 4, 2: h'33', -1: <PSK>}}}
+// CRED_R: CWT Claims Set for Responder (38 bytes) - MUST match initiator
+// {2: "respondr", 8: {1: {1: 4, 2: h'33', -1: <PSK>}}}
 static const uint8_t cred_r[] = {
-    0xa2,0x02,0x69,0x72,0x65,0x73,0x70,0x6f,0x6e,0x64,0x65,0x72,0x08,0xa1,0x01,0xa3,
+    0xa2,0x02,0x68,0x72,0x65,0x73,0x70,0x6f,0x6e,0x64,0x72,0x08,0xa1,0x01,0xa3,
     0x01,0x04,0x02,0x41,0x33,0x20,0x50,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,
     0x0a,0x0b,0x0c,0x0d,0x0e,0x0f,0x10
 };
+
+// Note: bytes_to_words32 and words32_to_bytes are no longer needed
+// The new hwx25519_init32_bytes and hwx25519_results32_bytes handle byte ordering internally
 
 // Function to compute public key from private key using software X25519
 // This mimics what crypto_wrapper.c does in shared_secret_derive()
@@ -151,6 +167,13 @@ static void generate_public_key(const uint8_t *priv_key, uint8_t *pub_key) {
     memset(e, 0, 32);
 }
 
+/* Read cycle counter for timing */
+static inline uint64_t read_cycles(void) {
+    uint64_t cycles;
+    asm volatile ("rdcycle %0" : "=r" (cycles));
+    return cycles;
+}
+
 int main(void) {
     REG32(uart, UART_REG_DIV) = 868;
     REG32(uart, UART_REG_TXCTRL) = UART_TXEN;
@@ -158,83 +181,81 @@ int main(void) {
     REG32_UART1(UART_REG_TXCTRL) = UART_TXEN;
     REG32_UART1(UART_REG_RXCTRL) = UART_RXEN;
     
+    /* Timing measurements */
+    uint64_t t_keygen_start = 0, t_keygen_end = 0;
+    uint64_t t_edhoc_start = 0, t_edhoc_end = 0;
+    
 #ifdef DEBUG_PRINT
     kprintf("\r\nEDHOC Responder (Software X25519)\r\n");
 #endif
     
-    // Generate public keys from private keys using software X25519
-    // kprintf("Generating public key g_r from r_priv...\r\n");
-    // generate_public_key(r_priv, g_r);
-    // kprintf("  -> g_r DONE\r\n");
-    
-#ifdef DEBUG_PRINT
-    kprintf("Generating ephemeral public key G_Y from y_r...\r\n");
-#endif
+    t_keygen_start = read_cycles();
     generate_public_key(y_r, g_y);
-#ifdef DEBUG_PRINT
-    kprintf("  -> G_Y DONE\r\n");
-#endif
+    t_keygen_end = read_cycles();
     
     // PSK Mode (Method 4) doesn't use static DH keys - authentication via PSK
 #ifdef DEBUG_PRINT
-    kprintf("PSK Mode: Using pre-shared key for authentication\r\n");
+    kprintf("\r\n=== RESPONDER INPUT PARAMETERS ===\r\n");
+    
+    kprintf("y_r (private key): ");
+    for (uint32_t i = 0; i < 32; i++) {
+        kprintf("%hx ", y_r[i]);
+        if ((i + 1) % 16 == 0) {  // Check if we just printed the 16th byte
+            kprintf("\r\n");
+        }
+    }
+    kprintf("\r\n");
+    
+    kprintf("G_Y (public key): ");
+    for (uint32_t i = 0; i < 32; i++) {
+        kprintf("%hx ", g_y[i]);
+        if ((i + 1) % 16 == 0) {  // Check if we just printed the 16th byte
+            kprintf("\r\n");
+        }
+    }
+    kprintf("\r\n");
+    
+    kprintf("C_R: ");
+    for (uint32_t i = 0; i < sizeof(c_r); i++) {
+        kprintf("%hx ", c_r[i]);
+    }
+    kprintf("\r\n");
+    
+    kprintf("PSK: ");
+    for (uint32_t i = 0; i < sizeof(psk); i++) {
+        kprintf("%hx ", psk[i]);
+    }
+    kprintf("\r\n");
+    
+    kprintf("ID_CRED_PSK: ");
+    for (uint32_t i = 0; i < sizeof(id_cred_psk); i++) {
+        kprintf("%hx ", id_cred_psk[i]);
+    }
+    kprintf("\r\n");
+    
+    kprintf("CRED_I: ");
+    for (uint32_t i = 0; i < sizeof(cred_i); i++) {
+        kprintf("%hx ", cred_i[i]);
+        if ((i + 1) % 16 == 0) {  // Check if we just printed the 16th byte
+            kprintf("\r\n");
+        }
+    }
+    kprintf("\r\n");
+    
+    kprintf("CRED_R: ");
+    for (uint32_t i = 0; i < sizeof(cred_r); i++) {
+        kprintf("%hx ", cred_r[i]);
+        if ((i + 1) % 16 == 0) {  // Check if we just printed the 16th byte
+            kprintf("\r\n");
+        }
+    }
+    kprintf("\r\n");
 #endif
     
-    // Test X25519 hardware accelerator
-    // kprintf("\r\n=== Testing X25519 Hardware ===\r\n");
-    // extern void hwx25519_selftest(void* x25519ctrl);
-    // hwx25519_selftest((void*)0x64004000);
-    // kprintf("=== X25519 Test Complete ===\r\n\r\n");
-    
-    // // Test UART1 transport
-    // kprintf("Testing UART1...\r\n");
-    
-    // // Test 1: Receive test bytes from initiator
-    // kprintf("RX: Waiting for test bytes (10s timeout)...\r\n");
-    // int timeout = 10000000;
-    // int c;
-    // while ((c = uart1_getc()) < 0 && timeout-- > 0);
-    // if (c >= 0) {
-    //     kprintf("RX: Got 0x"); kprintf("%x\r\n", c);
-    //     // Read a few more bytes
-    //     for (int i = 0; i < 3; i++) {
-    //         timeout = 1000000;
-    //         while ((c = uart1_getc()) < 0 && timeout-- > 0);
-    //         if (c >= 0) { kprintf("RX: Got 0x"); kprintf("%x\r\n", c); }
-    //     }
+#ifdef DEBUG_PRINT
+    kprintf("PSK Mode: Using pre-shared key for authentication\r\n");
+#endif
         
-    //     // Echo back
-    //     kprintf("TX: Echoing back...\r\n");
-    //     uart1_putc(0xBB);
-    //     uart1_putc(0x66);
-    //     uart1_putc(0x43);
-    //     uart1_putc(0x21);
-    //     kprintf("TX: Sent 0xBB 0x66 0x43 0x21\r\n");
-    // } else {
-    //     kprintf("RX: TIMEOUT - no data from initiator\r\n");
-    //     kprintf("Check: Is initiator running? Is UART1 wired correctly?\r\n");
-    // }
-    
-    // // Test 2: Test transport functions - wait for message
-    // kprintf("\r\nTesting transport functions...\r\n");
-    // uint8_t rx_buf[64];
-    // struct byte_array test_rx = {.ptr = rx_buf, .len = sizeof(rx_buf)};
-    // kprintf("RX: Waiting for message (10s timeout)...\r\n");
-    // enum err rx_result = rx_responder(NULL, &test_rx);
-    // kprintf("RX result: %d (0=ok, 7=timeout)\r\n", rx_result);
-    // if (rx_result == ok) {
-    //     kprintf("RX: Got %d bytes: ", test_rx.len);
-    //     for (uint32_t i = 0; i < test_rx.len && i < 16; i++) {
-    //         kprintf("%x ", test_rx.ptr[i]);
-    //     }
-    //     kprintf("\r\n");
-        
-    //     // Echo it back
-    //     kprintf("TX: Echoing message back...\r\n");
-    //     enum err tx_result = tx_responder(NULL, &test_rx);
-    //     kprintf("TX result: %d (0=ok)\r\n", tx_result);
-    // }
-    
     struct edhoc_responder_context ctx_r = {0};
     ctx_r.c_r.ptr = (uint8_t *)c_r; ctx_r.c_r.len = sizeof(c_r);
     ctx_r.suites_r.ptr = (uint8_t *)suites; ctx_r.suites_r.len = sizeof(suites);
@@ -255,18 +276,184 @@ int main(void) {
     struct byte_array prk_out = {.ptr = prk_out_buf, .len = sizeof(prk_out_buf)};
     struct byte_array err_msg = {.ptr = err_msg_buf, .len = sizeof(err_msg_buf)};
     
-    kprintf("\r\n=== RESPONDER START ===\r\n");
+#ifdef DEBUG_PRINT
+    kprintf("\r\n=== RESPONDER START new ===\r\n");
+#endif
 
+    t_edhoc_start = read_cycles();
     enum err result = edhoc_responder_run(&ctx_r, &cred_i_array, &err_msg, &prk_out, tx_responder, rx_responder, ead_process);
+    t_edhoc_end = read_cycles();
     
     if (result != ok) {
         kprintf("FAIL: %d\r\n", result);
         while (1);
     }
     
-    kprintf("OK! Key: ");
-    for (uint32_t i = 0; i < 16; i++) kprintf("%x", prk_out.ptr[i]);
+    kprintf("OK!\r\n");
+    
+    /* Print timing results */
+    kprintf("\r\n--- Software Computation Time (cycles) ---\r\n");
+    kprintf("Key generation:  %lu\r\n", (unsigned long)(t_keygen_end - t_keygen_start));
+    kprintf("EDHOC protocol:  %lu\r\n", (unsigned long)(t_edhoc_end - t_edhoc_start));
+    kprintf("TOTAL:           %lu\r\n", (unsigned long)(t_edhoc_end - t_keygen_start));
+    kprintf("------------------------------------------\r\n");
+    
+#ifdef DEBUG_PRINT
+    kprintf("PRK_out: ");
+    for (uint32_t i = 0; i < prk_out.len; i++) kprintf("%x", prk_out.ptr[i]);
     kprintf("\r\n");
+#endif
+    
+    // Get suite info to determine hash algorithm
+    struct suite current_suite;
+    result = get_suite(SUITE_7, &current_suite);
+    if (result != ok) {
+        kprintf("get_suite FAIL: %d\r\n", result);
+        while (1);
+    }
+    
+    // Derive OSCORE keys from PRK_out
+    uint8_t prk_exporter_buf[32];
+    struct byte_array prk_exporter = {.ptr = prk_exporter_buf, .len = sizeof(prk_exporter_buf)};
+    
+    result = prk_out2exporter(current_suite.edhoc_hash, &prk_out, &prk_exporter);
+    if (result != ok) {
+        kprintf("prk_out2exporter FAIL: %d\r\n", result);
+        while (1);
+    }
+    
+#ifdef DEBUG_PRINT
+    kprintf("PRK_exporter: ");
+    for (uint32_t i = 0; i < prk_exporter.len; i++) kprintf("%x", prk_exporter.ptr[i]);
+    kprintf("\r\n");
+#endif
+    
+    // Derive OSCORE Master Secret
+    uint8_t oscore_master_secret_buf[16];
+    struct byte_array oscore_master_secret = {.ptr = oscore_master_secret_buf, .len = sizeof(oscore_master_secret_buf)};
+    
+    result = edhoc_exporter(current_suite.edhoc_hash, OSCORE_MASTER_SECRET, &prk_exporter, &oscore_master_secret);
+    if (result != ok) {
+        kprintf("OSCORE MS derivation FAIL: %d\r\n", result);
+        while (1);
+    }
+    
+#ifdef DEBUG_PRINT
+    kprintf("OSCORE Master Secret: ");
+    for (uint32_t i = 0; i < oscore_master_secret.len; i++) kprintf("%x", oscore_master_secret.ptr[i]);
+    kprintf("\r\n");
+#endif
+    
+    // Derive OSCORE Master Salt
+    uint8_t oscore_master_salt_buf[8];
+    struct byte_array oscore_master_salt = {.ptr = oscore_master_salt_buf, .len = sizeof(oscore_master_salt_buf)};
+    
+    result = edhoc_exporter(current_suite.edhoc_hash, OSCORE_MASTER_SALT, &prk_exporter, &oscore_master_salt);
+    if (result != ok) {
+        kprintf("OSCORE Salt derivation FAIL: %d\r\n", result);
+        while (1);
+    }
+    
+#ifdef DEBUG_PRINT
+    kprintf("OSCORE Master Salt: ");
+    for (uint32_t i = 0; i < oscore_master_salt.len; i++) kprintf("%x", oscore_master_salt.ptr[i]);
+    kprintf("\r\n");
+#endif
+    
+    // Initialize OSCORE context (Responder is server, uses C_R as sender ID)
+#ifdef DEBUG_PRINT
+    kprintf("Initializing OSCORE context...\r\n");
+#endif
+    static struct context oscore_ctx;  // Static to avoid stack overflow
+    memset(&oscore_ctx, 0, sizeof(oscore_ctx));  // Zero out before use
+    
+    // For demo: manually set recipient_id to initiator's C_I (extracted from EDHOC msg1 in real scenario)
+    static uint8_t recipient_id_buf[1];
+    recipient_id_buf[0] = 0x2D;  // Initiator's C_I value
+    struct byte_array recipient_id = {.ptr = recipient_id_buf, .len = 1};
+    
+    struct oscore_init_params oscore_params = {
+        .master_secret = oscore_master_secret,
+        .sender_id = ctx_r.c_r,      // Responder's own ID
+        .recipient_id = recipient_id,   // Initiator's ID
+        .master_salt = oscore_master_salt,
+        .aead_alg = OSCORE_ASCON_AEAD_128,  // Use Ascon-AEAD for Suite 7
+        .hkdf = OSCORE_ASCON_HASH,          // Use HKDF with Ascon-Hash256 for Suite 7
+        .fresh_master_secret_salt = true  // Derived from EDHOC
+    };
+    
+    result = oscore_context_init(&oscore_params, &oscore_ctx);
+    if (result != ok) {
+        kprintf("OSCORE init FAIL: %d\r\n", result);
+        while (1);
+    }
+    
+    kprintf("OSCORE READY - Secure channel established\r\n");
+    
+//     // =========================================================================
+//     // REAL-LIFE SCENARIO: Continuous sensor data reception loop
+//     // Simulates an IoT gateway/server receiving encrypted telemetry from sensors
+//     // =========================================================================
+    
+//     static uint8_t oscore_msg_received[256];
+//     static uint8_t coap_decrypted[128];
+//     uint32_t msg_count = 0;
+    
+//     kprintf("\r\n=== OSCORE Server: Waiting for sensor data ===\r\n");
+    
+//     while (1) {
+//         // Wait for incoming encrypted message
+//         struct byte_array oscore_msg_ba = {
+//             .ptr = oscore_msg_received,
+//             .len = sizeof(oscore_msg_received)
+//         };
+        
+//         result = rx_responder(NULL, &oscore_msg_ba);
+//         if (result != ok) {
+//             kprintf("RX FAIL: %d (retrying...)\r\n", result);
+//             continue;  // Timeout or error, keep listening
+//         }
+        
+//         msg_count++;
+        
+// #ifdef DEBUG_PRINT
+//         kprintf("[RX] Received %d bytes encrypted\r\n", oscore_msg_ba.len);
+// #endif
+        
+//         // Decrypt OSCORE message back to CoAP
+//         uint32_t coap_decrypted_len = sizeof(coap_decrypted);
+//         result = oscore2coap(oscore_msg_received, oscore_msg_ba.len, 
+//                             coap_decrypted, &coap_decrypted_len, &oscore_ctx);
+//         if (result != ok) {
+//             kprintf("[%d] Decrypt FAIL: %d\r\n", msg_count, result);
+//             continue;  // Skip this message, wait for next
+//         }
+        
+//         // Parse and display the decrypted CoAP message
+//         // Extract payload (after 0xFF marker)
+//         char payload_str[64] = {0};
+//         uint32_t payload_idx = 0;
+//         for (uint32_t i = 0; i < coap_decrypted_len; i++) {
+//             if (coap_decrypted[i] == 0xFF && i + 1 < coap_decrypted_len) {
+//                 for (uint32_t j = i + 1; j < coap_decrypted_len && payload_idx < 63; j++) {
+//                     payload_str[payload_idx++] = coap_decrypted[j];
+//                 }
+//                 break;
+//             }
+//         }
+        
+//         // Display received sensor data
+//         // In production: store to database, trigger alerts, etc.
+//         kprintf("[%d] Sensor: %s\r\n", msg_count, payload_str);
+        
+// #ifdef DEBUG_PRINT
+//         // Show CoAP details
+//         uint8_t code = coap_decrypted[1];
+//         uint8_t token = (coap_decrypted[0] & 0x0F) > 0 ? coap_decrypted[4] : 0;
+//         kprintf("     Code: %d.%02d, Token: 0x%02x\r\n", 
+//                 (code >> 5) & 0x07, code & 0x1F, token);
+// #endif
+//     }
     
     while (1);
 }

@@ -46,6 +46,7 @@ void handle_external_runtime_error(int error_code, const char *file_name,
 				   const int line);
 
 #ifdef DEBUG_PRINT
+extern void kprintf(const char *, ...);
 #define RED "\x1B[31m"
 #define RESET "\033[0m"
 static const char transport_deinit_message[] = {
@@ -59,10 +60,11 @@ static const char external_runtime_error_message[] = {
 };
 
 #define PRINT_ARRAY(msg, a, a_len)                                             \
-	printf(msg);                                                           \
+	kprintf(msg);                                                               \
+	kprintf("\r\n");                                                              \
 	print_array(a, a_len);
-#define PRINT_MSG(msg) printf(msg);
-#define PRINTF(f_, ...) printf((f_), ##__VA_ARGS__);
+#define PRINT_MSG(msg) kprintf(msg);
+#define PRINTF(f_, ...) kprintf((f_), ##__VA_ARGS__);
 #else
 #define PRINT_ARRAY(msg, a, a_len) {};
 #define PRINT_MSG(msg) {};

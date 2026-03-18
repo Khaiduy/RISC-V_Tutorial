@@ -42,20 +42,32 @@ STATIC enum err derive(struct common_context *cc, struct byte_array *id,
 		       enum derive_type type, struct byte_array *out)
 {
 	BYTE_ARRAY_NEW(info, MAX_INFO_LEN, MAX_INFO_LEN);
+	kprintf("[DERIVE] Creating HKDF info...\r\n");
 	TRY(oscore_create_hkdf_info(id, &cc->id_context, cc->aead_alg, type,
 				    &info));
-
+	kprintf("[DERIVE] HKDF info created, len=%d\r\n", info.len);
 	PRINT_ARRAY("info struct", info.ptr, info.len);
 
+	kprintf("[DERIVE] KDF=%d, calling HKDF...\r\n", cc->kdf);
 	switch (cc->kdf) {
 	case OSCORE_SHA_256:
+		kprintf("[DERIVE] Using SHA-256 HKDF\r\n");
 		TRY(hkdf_sha_256(&cc->master_secret, &cc->master_salt, &info,
 				 out));
 		break;
+#ifdef ASCON
+	case OSCORE_ASCON_HASH:
+		kprintf("[DERIVE] Using Ascon HKDF\r\n");
+		TRY(hkdf_ascon(&cc->master_secret, &cc->master_salt, &info,
+			       out));
+		break;
+#endif
 	default:
+		kprintf("[DERIVE] Unknown KDF!\r\n");
 		return oscore_unknown_hkdf;
 		break;
 	}
+	kprintf("[DERIVE] HKDF complete\r\n");
 	return ok;
 }
 
@@ -66,7 +78,9 @@ STATIC enum err derive(struct common_context *cc, struct byte_array *id,
  */
 static enum err derive_common_iv(struct common_context *cc)
 {
+	kprintf("[DERIVE_IV] Starting...\r\n");
 	TRY(derive(cc, &EMPTY_ARRAY, IV, &cc->common_iv));
+	kprintf("[DERIVE_IV] Done\r\n");
 	PRINT_ARRAY("Common IV", cc->common_iv.ptr, cc->common_iv.len);
 	return ok;
 }
@@ -104,30 +118,61 @@ static enum err derive_recipient_key(struct common_context *cc,
 enum err oscore_context_init(struct oscore_init_params *params,
 			     struct context *c)
 {
+	kprintf("[OSCORE_INIT] START\r\\n");
 	/*derive common context************************************************/
 
+#ifdef ASCON
+	/* Suite 7: Use Ascon-AEAD-128 */
+	kprintf("[OSCORE_INIT] Checking AEAD alg\r\n");
+	if (params->aead_alg != OSCORE_ASCON_AEAD_128) {
+		kprintf("[OSCORE_INIT] AEAD mismatch!\r\n");
+		return oscore_invalid_algorithm_aead;
+	} else {
+		c->cc.aead_alg = OSCORE_ASCON_AEAD_128;
+		kprintf("[OSCORE_INIT] Using ASCON_AEAD_128\r\n");
+	}
+#else
+	/* Default: Use AES-CCM-16-64-128 */
 	if (params->aead_alg != OSCORE_AES_CCM_16_64_128) {
 		return oscore_invalid_algorithm_aead;
 	} else {
-		c->cc.aead_alg =
-			OSCORE_AES_CCM_16_64_128; /*that's the default*/
+		c->cc.aead_alg = OSCORE_AES_CCM_16_64_128;
 	}
+#endif
 
+	kprintf("[OSCORE_INIT] Checking HKDF\r\n");
+#ifdef ASCON
+	/* Suite 7: Use HKDF with Ascon-Hash256 */
+	if (params->hkdf != OSCORE_ASCON_HASH) {
+		kprintf("[OSCORE_INIT] HKDF mismatch! Expected ASCON_HASH\r\n");
+		return oscore_invalid_algorithm_hkdf;
+	} else {
+		c->cc.kdf = OSCORE_ASCON_HASH;
+		kprintf("[OSCORE_INIT] Using ASCON_HASH HKDF\r\n");
+	}
+#else
 	if (params->hkdf != OSCORE_SHA_256) {
+		kprintf("[OSCORE_INIT] HKDF mismatch!\r\n");
 		return oscore_invalid_algorithm_hkdf;
 	} else {
 		c->cc.kdf = OSCORE_SHA_256; /*that's the default*/
+		kprintf("[OSCORE_INIT] Using SHA-256 HKDF\r\n");
 	}
+#endif
 
+	kprintf("[OSCORE_INIT] Setting params\r\n");
         c->cc.fresh_master_secret_salt = params->fresh_master_secret_salt;
 	c->cc.master_secret = params->master_secret;
 	c->cc.master_salt = params->master_salt;
 	c->cc.id_context = params->id_context;
 	c->cc.common_iv.len = sizeof(c->cc.common_iv_buf);
 	c->cc.common_iv.ptr = c->cc.common_iv_buf;
+	kprintf("[OSCORE_INIT] Deriving common IV\r\n");
+	kprintf("[OSCORE_INIT] KDF: %d\r\n", c->cc.kdf);
 	TRY(derive_common_iv(&c->cc));
 
 	/*derive Recipient Context*********************************************/
+	kprintf("[OSCORE_INIT] Recipient context\r\n");
 	c->rc.notification_num_initialized = false;
 	server_replay_window_init(&c->rc.replay_window);
 	c->rc.recipient_id.len = params->recipient_id.len;
@@ -136,9 +181,11 @@ enum err oscore_context_init(struct oscore_init_params *params,
 	       params->recipient_id.len);
 	c->rc.recipient_key.len = sizeof(c->rc.recipient_key_buf);
 	c->rc.recipient_key.ptr = c->rc.recipient_key_buf;
+	kprintf("[OSCORE_INIT] Deriving recipient key\r\n");
 	TRY(derive_recipient_key(&c->cc, &c->rc));
 
 	/*derive Sender Context************************************************/
+	kprintf("[OSCORE_INIT] Sender context\r\n");
 	c->sc.sender_id = params->sender_id;
 	c->sc.sender_key.len = sizeof(c->sc.sender_key_buf);
 	c->sc.sender_key.ptr = c->sc.sender_key_buf;
@@ -146,10 +193,13 @@ enum err oscore_context_init(struct oscore_init_params *params,
 				     .recipient_id = c->rc.recipient_id,
 				     .id_context = c->cc.id_context };
 
+	kprintf("[OSCORE_INIT] SSN init\r\n");
 	TRY(ssn_init(&nvm_key, &c->sc.ssn, params->fresh_master_secret_salt));
+	kprintf("[OSCORE_INIT] Deriving sender key\r\n");
 	TRY(derive_sender_key(&c->cc, &c->sc));
 
 	/*set up the request response context**********************************/
+	kprintf("[OSCORE_INIT] RRC setup\r\n");
 	oscore_interactions_init(c->rrc.interactions);
 	c->rrc.nonce.len = sizeof(c->rrc.nonce_buf);
 	c->rrc.nonce.ptr = c->rrc.nonce_buf;
@@ -161,6 +211,7 @@ enum err oscore_context_init(struct oscore_init_params *params,
 		(params->fresh_master_secret_salt ? ECHO_SYNCHRONIZED :
 						    ECHO_REBOOT);
 
+	kprintf("[OSCORE_INIT] COMPLETE!\r\n");
 	return ok;
 }
 

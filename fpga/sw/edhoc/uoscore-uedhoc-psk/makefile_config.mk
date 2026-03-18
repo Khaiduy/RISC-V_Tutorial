@@ -32,7 +32,13 @@ OPT = -Os
 ################################################################################
 # Print helpful debug messages
 ################################################################################
+# Disabled for bare-metal RISC-V (kprintf doesn't support %s format specifier)
 DEBUG_PRINT += -DDEBUG_PRINT
+
+################################################################################
+# Print timing measurements (independent of DEBUG_PRINT)
+################################################################################
+# TIMING_PRINT += -DTIMING_PRINT
 
 ################################################################################
 # Use Address Sanitizer, e.g. with native_posix
@@ -90,11 +96,11 @@ FEATURES += -DID_CRED_R_SIZE=16
 # Size of ID_CRED_I (PSK mode uses compact encoding: ~4-8 bytes)
 FEATURES += -DID_CRED_I_SIZE=16 
 
-# Size of CRED_R (PSK mode: CWT Claims Set with subject + COSE_Key, 39 bytes)
-FEATURES += -DCRED_R_SIZE=39 
+# Size of CRED_R (PSK mode: CWT Claims Set with 8-byte subject + COSE_Key, 38 bytes)
+FEATURES += -DCRED_R_SIZE=38 
 
-# Size of CRED_I (PSK mode: CWT Claims Set with subject + COSE_Key, 39 bytes)
-FEATURES += -DCRED_I_SIZE=39 
+# Size of CRED_I (PSK mode: CWT Claims Set with 8-byte subject + COSE_Key, 38 bytes)
+FEATURES += -DCRED_I_SIZE=38 
 
 # Number of supported suites by the initiator
 FEATURES += -DSUITES_I_SIZE=1 
@@ -102,8 +108,8 @@ FEATURES += -DSUITES_I_SIZE=1
 ################################################################################
 # RAM optimization OSCORE
 ################################################################################
-# Max size of an OSCORE plaintext
-FEATURES += -DOSCORE_MAX_PLAINTEXT_LEN=1024
+# Max size of an OSCORE plaintext (reduced for bare-metal stack constraints)
+FEATURES += -DOSCORE_MAX_PLAINTEXT_LEN=128
 
 # Max size of the E options buffer
 FEATURES += -DE_OPTIONS_BUFF_MAX_LEN=100
@@ -113,8 +119,13 @@ FEATURES += -DI_OPTIONS_BUFF_MAX_LEN=100
 
 
 ################################################################################
-# Crypto engine
+# Crypto engine / Suite Selection
 ################################################################################
+# Crypto Suite Selection (passed from parent Makefile or set here):
+#   CRYPTO_SUITE=0: Suite 0 - AES-CCM-16-64-128 (8-byte tag, 13-byte nonce)
+#   CRYPTO_SUITE=1: Suite 1 - AES-CCM-16-128-128 (16-byte tag, 13-byte nonce)
+#   CRYPTO_SUITE=7: Suite 7 - Ascon-AEAD-128 (16-byte tag, 16-byte nonce) [default]
+#
 # The uoscore-uedhoc can be used with different crypto engines. 
 # The user can provide as well additional crypto engines by providing 
 # implementations of the function defined (as week) in the crypto_wrapper file.
@@ -169,10 +180,32 @@ FEATURES += -DI_OPTIONS_BUFF_MAX_LEN=100
 # | EDHOC  | 2/3     | 0/1/2/3 | MBEDTLS
 # | EDHOC  | 0/1/2/3 | 0/1/2/3 | MBEDTLS and COMPACT25519
 
+CRYPTO_SUITE ?= 7
 
-# For Method 4 (PSK) + Suite 1 with Ascon-AEAD: Use software X25519 (COMPACT25519) with ASCON
-#CRYPTO_ENGINE += -DTINYCRYPT
+ifeq ($(CRYPTO_SUITE),0)
+# Suite 0: TinyCrypt (AES-CCM-16-64-128, 8-byte tag)
+CRYPTO_ENGINE += -DTINYCRYPT
+CRYPTO_ENGINE += -DMONOCYPHER
+
+CRYPTO_ENGINE += 
+
+CRYPTO_ENGINE += -DEDHOC_CRYPTO_SUITE=0
+else ifeq ($(CRYPTO_SUITE),1)
+# Suite 1: TinyCrypt (AES-CCM-16-128-128, 16-byte tag)
+CRYPTO_ENGINE += -DTINYCRYPT
+CRYPTO_ENGINE += -DMONOCYPHER
+
+CRYPTO_ENGINE += 
+
+CRYPTO_ENGINE += -DEDHOC_CRYPTO_SUITE=1
+else ifeq ($(CRYPTO_SUITE),7)
+# Suite 7: Pure Ascon (Ascon-AEAD-128 + Ascon-HMAC)
 CRYPTO_ENGINE += -DASCON
+
+CRYPTO_ENGINE += 
+
+CRYPTO_ENGINE += -DEDHOC_CRYPTO_SUITE=7
+endif
+
 #CRYPTO_ENGINE += -DUSE_HW_X25519
-CRYPTO_ENGINE += -DCOMPACT25519
 #CRYPTO_ENGINE += -DMBEDTLS

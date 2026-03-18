@@ -41,6 +41,18 @@ enum err get_suite(enum suite_label label, struct suite *suite)
 		return ok;
 	} else if (label == SUITE_2) {
 		suite->suite_label = SUITE_2;
+		suite->edhoc_aead = AES_CCM_16_128_128;  // Tag=16, Nonce=13 (NOTE: Suite 2 uses AES, not Ascon)
+		suite->edhoc_hash = SHA_256;
+		suite->edhoc_ecdh = X25519;
+		suite->edhoc_sign = ES256;
+		suite->app_aead = AES_CCM_16_128_128;
+		suite->app_hash = SHA_256;
+#ifdef DEBUG_PRINT
+		kprintf("\r\n*** SUITE 2 SELECTED: AES-CCM-16-128-128 + ES256 ***\r\n\r\n");
+#endif
+		return ok;
+	} else if (label == SUITE_7) {
+		suite->suite_label = SUITE_7;
 		suite->edhoc_aead = ASCON_AEAD_128;  // Tag=16, Nonce=16, Key=16
 		suite->edhoc_hash = ASCON_HASH_256;  // Ascon-Hash256 (pure Ascon suite)
 		suite->edhoc_ecdh = X25519;
@@ -48,7 +60,7 @@ enum err get_suite(enum suite_label label, struct suite *suite)
 		suite->app_aead = ASCON_AEAD_128;
 		suite->app_hash = ASCON_HASH_256;    // Ascon-Hash256
 #ifdef DEBUG_PRINT
-		kprintf("\r\n*** SUITE 2 SELECTED: ASCON-AEAD-128 + ASCON-HASH256 ***\r\n\r\n");
+		kprintf("\r\n*** SUITE 7 SELECTED: ASCON-AEAD-128 + ASCON-HASH256 ***\r\n\r\n");
 #endif
 		return ok;
 	}

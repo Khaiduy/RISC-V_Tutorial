@@ -118,8 +118,7 @@ enum err msg1_gen(const struct edhoc_initiator_context *c,
 
 	size_t payload_len_out;
 	TRY_EXPECT(cbor_encode_message_1(rc->msg.ptr, rc->msg.len, &m1,
-					 &payload_len_out),
-		   0);
+					 &payload_len_out), 0);
 	rc->msg.len = (uint32_t)payload_len_out;
 
 #ifdef DEBUG_PRINT
@@ -129,7 +128,13 @@ enum err msg1_gen(const struct edhoc_initiator_context *c,
 	TRY(get_suite((enum suite_label)c->suites_i.ptr[c->suites_i.len - 1],
 		      &rc->suite));
 	/* Calculate hash of msg1 for TH2. */
+	uint64_t t_hash_start, t_hash_end;
+	__asm__ volatile ("rdcycle %0" : "=r"(t_hash_start));
 	TRY(hash(rc->suite.edhoc_hash, &rc->msg, &rc->msg1_hash));
+	__asm__ volatile ("rdcycle %0" : "=r"(t_hash_end));
+#ifdef TIMING_PRINT
+	kprintf("[TIMING-I] hash(msg1): %lu cycles\r\n", (unsigned long)(t_hash_end - t_hash_start));
+#endif
 	return ok;
 }
 
@@ -155,7 +160,13 @@ static enum err msg2_process(const struct edhoc_initiator_context *c,
 	/*calculate the DH shared secret*/
 	BYTE_ARRAY_NEW(g_xy, ECDH_SECRET_SIZE, ECDH_SECRET_SIZE);
 
+	uint64_t t_ecdh_start, t_ecdh_end;
+	__asm__ volatile ("rdcycle %0" : "=r"(t_ecdh_start));
 	TRY(shared_secret_derive(rc->suite.edhoc_ecdh, &c->x, &g_y, g_xy.ptr));
+	__asm__ volatile ("rdcycle %0" : "=r"(t_ecdh_end));
+#ifdef TIMING_PRINT
+	kprintf("[TIMING-I] shared_secret_derive(X25519): %lu cycles\r\n", (unsigned long)(t_ecdh_end - t_ecdh_start));
+#endif
 #ifdef DEBUG_PRINT
 	PRINT_ARRAY("G_XY (ECDH shared secret) ", g_xy.ptr, g_xy.len);
 #endif
@@ -163,11 +174,23 @@ static enum err msg2_process(const struct edhoc_initiator_context *c,
 	/*calculate th2*/
 	BYTE_ARRAY_NEW(th2, HASH_SIZE, get_hash_len(rc->suite.edhoc_hash));
 
+	uint64_t t_th2_start, t_th2_end;
+	__asm__ volatile ("rdcycle %0" : "=r"(t_th2_start));
 	TRY(th2_calculate(rc->suite.edhoc_hash, &rc->msg1_hash, &g_y, &th2));
+	__asm__ volatile ("rdcycle %0" : "=r"(t_th2_end));
+#ifdef TIMING_PRINT
+	kprintf("[TIMING-I] th2_calculate: %lu cycles\r\n", (unsigned long)(t_th2_end - t_th2_start));
+#endif
 
 	/*calculate PRK_2e*/
 	BYTE_ARRAY_NEW(PRK_2e, PRK_SIZE, PRK_SIZE);
+	uint64_t t_hkdf_start, t_hkdf_end;
+	__asm__ volatile ("rdcycle %0" : "=r"(t_hkdf_start));
 	TRY(hkdf_extract(rc->suite.edhoc_hash, &th2, &g_xy, PRK_2e.ptr));
+	__asm__ volatile ("rdcycle %0" : "=r"(t_hkdf_end));
+#ifdef TIMING_PRINT
+	kprintf("[TIMING-I] hkdf_extract(PRK_2e): %lu cycles\r\n", (unsigned long)(t_hkdf_end - t_hkdf_start));
+#endif
 #ifdef DEBUG_PRINT
 	PRINT_ARRAY("PRK_2e", PRK_2e.ptr, PRK_2e.len);
 #endif
@@ -176,8 +199,14 @@ static enum err msg2_process(const struct edhoc_initiator_context *c,
 	TRY(check_buffer_size(PLAINTEXT2_SIZE, plaintext.len));
 
 	/* PSK Mode: Decrypt CIPHERTEXT_2 (no ID_CRED_R, no MAC_2) */
+	uint64_t t_decrypt_start, t_decrypt_end;
+	__asm__ volatile ("rdcycle %0" : "=r"(t_decrypt_start));
 	TRY(ciphertext_decrypt_split_psk(CIPHERTEXT2, &rc->suite, c_r, &rc->ead,
 					  &PRK_2e, &th2, &ciphertext, &plaintext));
+	__asm__ volatile ("rdcycle %0" : "=r"(t_decrypt_end));
+#ifdef TIMING_PRINT
+	kprintf("[TIMING-I] ciphertext_decrypt_split_psk(msg2): %lu cycles\r\n", (unsigned long)(t_decrypt_end - t_decrypt_start));
+#endif
 
 	/* PSK mode: PRK_3e2m = PRK_2e (no static DH, per draft section 5.1) */
 	memcpy(PRK_3e2m->ptr, PRK_2e.ptr, PRK_2e.len);
@@ -187,10 +216,22 @@ static enum err msg2_process(const struct edhoc_initiator_context *c,
 #endif
 
 	/* PSK mode: TH_3 = H(TH_2, PLAINTEXT_2A) - NO CRED_R */
+	uint64_t t_th3_start, t_th3_end;
+	__asm__ volatile ("rdcycle %0" : "=r"(t_th3_start));
 	TRY(th3_calculate_psk(rc->suite.edhoc_hash, &th2, &plaintext, th3));
+	__asm__ volatile ("rdcycle %0" : "=r"(t_th3_end));
+#ifdef TIMING_PRINT
+	kprintf("[TIMING-I] th3_calculate_psk: %lu cycles\r\n", (unsigned long)(t_th3_end - t_th3_start));
+#endif
 
 	/* PSK mode: Derive PRK_4e3m from PSK */
+	uint64_t t_prk4_start, t_prk4_end;
+	__asm__ volatile ("rdcycle %0" : "=r"(t_prk4_start));
 	TRY(prk_derive_psk(rc->suite, th3, PRK_3e2m, &c->psk, rc->prk_4e3m.ptr));
+	__asm__ volatile ("rdcycle %0" : "=r"(t_prk4_end));
+#ifdef TIMING_PRINT
+	kprintf("[TIMING-I] prk_derive_psk(PRK_4e3m): %lu cycles\r\n", (unsigned long)(t_prk4_end - t_prk4_start));
+#endif
 #ifdef DEBUG_PRINT
 	PRINT_ARRAY("prk_4e3m", rc->prk_4e3m.ptr, rc->prk_4e3m.len);
 #endif
@@ -217,9 +258,15 @@ static enum err msg3_only_gen(const struct edhoc_initiator_context *c,
 	struct byte_array cred_r = cred_r_array->ptr[0].cred;
 	
 	/* PSK mode: Generate CIPHERTEXT_3 with PSK-specific function */
+	uint64_t t_encrypt_start, t_encrypt_end;
+	__asm__ volatile ("rdcycle %0" : "=r"(t_encrypt_start));
 	TRY(ciphertext_gen_psk_msg3(&rc->suite, &c->id_cred_psk, &c->ead_3,
 				    PRK_3e2m, th3, &rc->prk_4e3m, &c->cred_i,
 				    &cred_r, &ciphertext, &plaintext));
+	__asm__ volatile ("rdcycle %0" : "=r"(t_encrypt_end));
+#ifdef TIMING_PRINT
+	kprintf("[TIMING-I] ciphertext_gen_psk_msg3: %lu cycles\r\n", (unsigned long)(t_encrypt_end - t_encrypt_start));
+#endif
 
 	/*massage 3 create and send*/
 	TRY(encode_bstr(&ciphertext, &rc->msg));
@@ -230,12 +277,24 @@ static enum err msg3_only_gen(const struct edhoc_initiator_context *c,
 	/* PSK mode: TH_4 = H(TH_3, ID_CRED_PSK, PLAINTEXT_3B, CRED_I, CRED_R)
 	 * where ID_CRED_PSK = ID_CRED_I and PLAINTEXT_3B = (?EAD_3)
 	 */
+	uint64_t t_th4_start, t_th4_end;
+	__asm__ volatile ("rdcycle %0" : "=r"(t_th4_start));
 	TRY(th4_calculate_psk(rc->suite.edhoc_hash, th3, &c->id_cred_psk,
 			      &c->ead_3, &c->cred_i, &cred_r, &rc->th4));
+	__asm__ volatile ("rdcycle %0" : "=r"(t_th4_end));
+#ifdef TIMING_PRINT
+	kprintf("[TIMING-I] th4_calculate_psk: %lu cycles\r\n", (unsigned long)(t_th4_end - t_th4_start));
+#endif
 
 	/*PRK_out*/
+	uint64_t t_kdf_start, t_kdf_end;
+	__asm__ volatile ("rdcycle %0" : "=r"(t_kdf_start));
 	TRY(edhoc_kdf(rc->suite.edhoc_hash, &rc->prk_4e3m, PRK_out, &rc->th4,
 		      prk_out));
+	__asm__ volatile ("rdcycle %0" : "=r"(t_kdf_end));
+#ifdef TIMING_PRINT
+	kprintf("[TIMING-I] edhoc_kdf(PRK_out): %lu cycles\r\n", (unsigned long)(t_kdf_end - t_kdf_start));
+#endif
 	return ok;
 }
 

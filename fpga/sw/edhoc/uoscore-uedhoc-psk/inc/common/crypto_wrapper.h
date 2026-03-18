@@ -129,6 +129,21 @@ enum err hkdf_sha_256(struct byte_array *master_secret,
 		      struct byte_array *master_salt, struct byte_array *info,
 		      struct byte_array *out);
 
+#ifdef ASCON
+/**
+ * @brief HKDF using Ascon-Hash256 for Suite 7.
+ * @param[in] master_secret	The master secret.
+ * @param[in] master_salt 	The master salt.
+ * @param[in] info 		A CBOR structure containing id, id_context,
+ *				alg_aead, type, L.
+ * @param[out] out 		The derived Common IV, Recipient/Sender keys
+ * @return 			Ok or error code.
+ */
+enum err hkdf_ascon(struct byte_array *master_secret,
+		    struct byte_array *master_salt, struct byte_array *info,
+		    struct byte_array *out);
+#endif
+
 #ifdef EDHOC_MOCK_CRYPTO_WRAPPER
 /*
  * Elliptic curve based signature algorithms generate signatures that are not 

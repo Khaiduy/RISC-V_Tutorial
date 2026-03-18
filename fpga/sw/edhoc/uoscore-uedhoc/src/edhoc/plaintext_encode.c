@@ -23,9 +23,15 @@
 #include "cbor/edhoc_decode_id_cred_x.h"
 #include "cbor/edhoc_encode_int_type.h"
 
+extern void kprintf(const char *, ...);
+
 enum err id_cred2kid(const struct byte_array *id_cred, struct byte_array *kid)
 {
+        kprintf("id_cred: len=%d\n", id_cred->len);
+        if (id_cred->len != 3) return 999;
+        if (id_cred->ptr[0] != 0xa1) return 998;
 	struct id_cred_x_map map = { 0 };
+
 	size_t payload_len_out;
 	size_t decode_len = 0;
 	TRY_EXPECT(cbor_decode_id_cred_x_map(id_cred->ptr, id_cred->len, &map,

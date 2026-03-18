@@ -13,11 +13,11 @@ DEVICE=${2:-sdc1}
 # Determine binary path based on name
 case "$BINARY_NAME" in
     initiator|init|i)
-        BINARY="build/edhoc_initiator.bin"
+        BINARY="build/edhoc_m0_initiator.bin"
         DESC="EDHOC Initiator (PSK Mode)"
         ;;
     responder|resp|r)
-        BINARY="build/edhoc_responder.bin"
+        BINARY="build/edhoc_m0_responder.bin"
         DESC="EDHOC Responder (PSK Mode)"
         ;;
     main|m)

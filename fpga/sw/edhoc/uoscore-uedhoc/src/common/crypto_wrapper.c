@@ -51,7 +51,12 @@ modify setting in include/psa/crypto_config.h
 #ifdef COMPACT25519
 #include <c25519.h>
 #include <edsign.h>
-#include <compact_x25519.h>
+//#include <compact_x25519.h>
+#endif
+
+#if defined(MONOCYPHER)
+#include <monocypher.h>
+#include "optional/monocypher-ed25519.h"
 #endif
 
 #ifdef TINYCRYPT
@@ -59,8 +64,16 @@ modify setting in include/psa/crypto_config.h
 #include <tinycrypt/ccm_mode.h>
 #include <tinycrypt/constants.h>
 #include <tinycrypt/hmac.h>
-#include <tinycrypt/ecc_dsa.h>
-#include <tinycrypt/ecc_dh.h>
+/* STUB U_ECC */
+#define NUM_ECC_BYTES 32
+#define uECC_Curve int
+#define uECC_secp256r1() 0
+#define uECC_decompress(a, b, c)
+#define uECC_shared_secret(a, b, c, d) 1
+#define uECC_sign(a, b, c, d, e) 1
+#define uECC_verify(a, b, c, d, e) 1
+#define uECC_make_key(a, b, c) 1
+#define uECC_word_t int
 #endif
 
 #ifdef MBEDTLS
@@ -166,7 +179,7 @@ cleanup:
 
 #endif
 
-#ifdef TINYCRYPT
+#if 0
 /* Declaration of function from TinyCrypt ecc.c */
 uECC_word_t cond_set(uECC_word_t p_true, uECC_word_t p_false,
 		     unsigned int cond);
@@ -383,11 +396,14 @@ enum err WEAK sign(enum sign_alg alg, const struct byte_array *sk,
 #endif // EDHOC_MOCK_CRYPTO_WRAPPER
 
 	if (alg == EdDSA) {
-#if defined(COMPACT25519)
-		edsign_sign(out, pk->ptr, sk->ptr, msg->ptr, msg->len);
-		return ok;
+#if defined(MONOCYPHER)
+                crypto_ed25519_sign(out, sk->ptr, msg->ptr, msg->len);
+                return ok;
+#elif defined(COMPACT25519)
+                edsign_sign(out, pk->ptr, sk->ptr, msg->ptr, msg->len);
+                return ok;
 #endif
-	} else if (alg == ES256) {
+        } else if (alg == ES256) {
 #if defined(TINYCRYPT)
 
 		uECC_Curve p256 = uECC_secp256r1();
@@ -452,7 +468,11 @@ enum err WEAK verify(enum sign_alg alg, const struct byte_array *pk,
 		     bool *result)
 {
 	if (alg == EdDSA) {
-#ifdef COMPACT25519
+#ifdef MONOCYPHER
+int verified = crypto_ed25519_check(sgn->ptr, pk->ptr, msg->ptr, msg->len);
+*result = (verified == 0);
+return ok;
+#elif defined(COMPACT25519)
 		int verified =
 			edsign_verify(sgn->ptr, pk->ptr, msg->ptr, msg->len);
 		if (verified) {
@@ -680,14 +700,17 @@ enum err WEAK shared_secret_derive(enum ecdh_alg alg,
 				   uint8_t *shared_secret)
 {
 	if (alg == X25519) {
-#ifdef COMPACT25519
-		uint8_t e[F25519_SIZE];
-		f25519_copy(e, sk->ptr);
-		c25519_prepare(e);
-		c25519_smult(shared_secret, pk->ptr, e);
-		return ok;
+#if defined(MONOCYPHER)
+                crypto_x25519(shared_secret, sk->ptr, pk->ptr);
+                return ok;
+#elif defined(COMPACT25519)
+                uint8_t e[F25519_SIZE];
+                f25519_copy(e, sk->ptr);
+                c25519_prepare(e);
+                c25519_smult(shared_secret, pk->ptr, e);
+                return ok;
 #endif
-	}
+        }
 	if (alg == P256) {
 #if defined(TINYCRYPT)
 		uECC_Curve p256 = uECC_secp256r1();
@@ -802,74 +825,19 @@ enum err WEAK ephemeral_dh_key_gen(enum ecdh_alg alg, uint32_t seed,
 			return sha_failed;
 		}
 #endif
-		compact_x25519_keygen(sk->ptr, pk->ptr, extended_seed);
-		pk->len = X25519_KEY_SIZE;
-		sk->len = X25519_KEY_SIZE;
+#if defined(MONOCYPHER)
+                memcpy(sk->ptr, extended_seed, 32);
+                sk->ptr[0] &= 0xf8;
+                sk->ptr[31] &= 0x7f;
+                sk->ptr[31] |= 0x40;
+                crypto_x25519_public_key(pk->ptr, sk->ptr);
+#else
+                compact_x25519_keygen(sk->ptr, pk->ptr, extended_seed);
 #endif
-	} else if (alg == P256) {
-#if defined(TINYCRYPT)
-		if (P_256_PUB_KEY_X_CORD_SIZE > pk->len) {
-			return buffer_to_small;
-		}
-		uECC_Curve p256 = uECC_secp256r1();
-		uint8_t pk_decompressed[P_256_PUB_KEY_UNCOMPRESSED_SIZE];
-		TRY_EXPECT(uECC_make_key(pk_decompressed, sk->ptr, p256),
-			   TC_CRYPTO_SUCCESS);
-		TRY(_memcpy_s(pk->ptr, P_256_PUB_KEY_X_CORD_SIZE,
-			      pk_decompressed, P_256_PUB_KEY_X_CORD_SIZE));
-		pk->len = P_256_PUB_KEY_X_CORD_SIZE;
-		return ok;
-#elif defined(MBEDTLS) /* TINYCRYPT / MBEDTLS */
-		psa_key_id_t key_id = PSA_KEY_HANDLE_INIT;
-		psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
-		psa_algorithm_t psa_alg = PSA_ALG_ECDH;
-		uint8_t priv_key_size = P_256_PRIV_KEY_SIZE;
-		size_t bits = PSA_BYTES_TO_BITS((size_t)priv_key_size);
-		size_t pub_key_uncompressed_size =
-			P_256_PUB_KEY_UNCOMPRESSED_SIZE;
-		uint8_t pub_key_uncompressed[P_256_PUB_KEY_UNCOMPRESSED_SIZE];
-
-		if (P_256_PUB_KEY_X_CORD_SIZE > pk->len) {
-			return buffer_to_small;
-		}
-		TRY_EXPECT_PSA(psa_crypto_init(), PSA_SUCCESS, key_id,
-			       unexpected_result_from_ext_lib);
-
-		psa_set_key_usage_flags(&attributes,
-					PSA_KEY_USAGE_EXPORT |
-						PSA_KEY_USAGE_DERIVE |
-						PSA_KEY_USAGE_SIGN_MESSAGE |
-						PSA_KEY_USAGE_SIGN_HASH);
-		psa_set_key_algorithm(&attributes, psa_alg);
-		psa_set_key_type(&attributes, PSA_KEY_TYPE_ECC_KEY_PAIR(
-						      PSA_ECC_FAMILY_SECP_R1));
-		psa_set_key_bits(&attributes, bits);
-
-		TRY_EXPECT_PSA(psa_generate_key(&attributes, &key_id),
-			       PSA_SUCCESS, key_id,
-			       unexpected_result_from_ext_lib);
-
-		size_t key_len = 0;
-		size_t public_key_len = 0;
-
-		TRY_EXPECT_PSA(psa_export_key(key_id, sk->ptr, priv_key_size,
-					      &key_len),
-			       PSA_SUCCESS, key_id,
-			       unexpected_result_from_ext_lib);
-		TRY_EXPECT_PSA(
-			psa_export_public_key(key_id, pub_key_uncompressed,
-					      pub_key_uncompressed_size,
-					      &public_key_len),
-			PSA_SUCCESS, key_id, unexpected_result_from_ext_lib);
-		TRY_EXPECT_PSA(public_key_len, P_256_PUB_KEY_UNCOMPRESSED_SIZE,
-			       key_id, unexpected_result_from_ext_lib);
-		/* Prepare output format - only x parameter */
-		memcpy(pk->ptr, (pub_key_uncompressed + 1),
-		       P_256_PUB_KEY_X_CORD_SIZE);
-		TRY_EXPECT(psa_destroy_key(key_id), PSA_SUCCESS);
-		pk->len = P_256_PUB_KEY_X_CORD_SIZE;
+                pk->len = X25519_KEY_SIZE;
+                sk->len = X25519_KEY_SIZE;
 #endif
-	} else {
+	} else if (alg == P256) return crypto_operation_not_implemented; else {
 		return unsupported_ecdh_curve;
 	}
 	return ok;

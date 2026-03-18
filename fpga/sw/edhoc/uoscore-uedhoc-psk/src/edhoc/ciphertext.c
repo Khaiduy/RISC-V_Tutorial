@@ -29,6 +29,9 @@ static void print_hex(const char *label, const uint8_t *data, uint32_t len)
 {
 	kprintf("%s", label);
 	for (uint32_t i = 0; i < len; i++) {
+		if (i > 0 && (i % 16) == 0) {
+			kprintf("\r\n                          "); // Indent continuation lines
+		}
 		uint8_t b = data[i];
 		uint8_t hi = (b >> 4) & 0xF;
 		uint8_t lo = b & 0xF;
@@ -308,14 +311,14 @@ enum err ciphertext_decrypt_split_psk(
 			ead->ptr = NULL;
 			ead->len = 0;
 #ifdef DEBUG_PRINT
-			PRINT_MSG("No EAD_4\\r\\n");
+			PRINT_MSG("No EAD_4\r\n");
 #endif
 		}
 	} else {
 		/* Message 2: PSK mode PLAINTEXT_2 = (C_R, ?EAD_2) - no ID_CRED, no MAC */
 #ifdef DEBUG_PRINT
-		kprintf("[CIPHER] PSK mode: calling plaintext_split_psk_msg2\\r\\n");
-		kprintf("[CIPHER] plaintext->len=%d\\r\\n", plaintext->len);
+		kprintf("[CIPHER] PSK mode: calling plaintext_split_psk_msg2\r\n");
+		kprintf("[CIPHER] plaintext->len=%d\r\n", plaintext->len);
 #endif
 		TRY(plaintext_split_psk_msg2(plaintext, c_r, ead));
 #ifdef DEBUG_PRINT
@@ -327,7 +330,7 @@ enum err ciphertext_decrypt_split_psk(
 #endif
 	}
 #ifdef DEBUG_PRINT
-	kprintf("==========================================\\r\\n\\r\\n");
+	kprintf("==========================================\r\n\r\n");
 #endif
 	return ok;
 }
@@ -368,10 +371,10 @@ enum err ciphertext_gen_psk_msg3(
 	BYTE_ARRAY_NEW(iv_3, AEAD_IV_SIZE, iv_len);
 	
 #ifdef DEBUG_PRINT
-	kprintf("\\r\\n========== INITIATOR: ENCRYPT_3B ==========\\r\\n");
+	kprintf("\r\n========== INITIATOR: ENCRYPT_3B ==========\r\n");
 	print_hex("[I-ENC] PRK_4e3m: ", prk_4e3m->ptr, prk_4e3m->len);
 	print_hex("[I-ENC] TH_3: ", th3->ptr, th3->len);
-	kprintf("[I-ENC] key_len=%d, iv_len=%d\\r\\n", key_len, iv_len);
+	kprintf("[I-ENC] key_len=%d, iv_len=%d\r\n", key_len, iv_len);
 #endif
 	
 	TRY(edhoc_kdf(suite->edhoc_hash, prk_4e3m, K_3, th3, &k_3));
@@ -404,7 +407,7 @@ enum err ciphertext_gen_psk_msg3(
 	TRY(byte_array_append(&external_aad, cred_r, external_aad_capacity));
 	
 #ifdef DEBUG_PRINT
-	kprintf("[I-ENC] external_aad.len=%d\\r\\n", external_aad.len);
+	kprintf("[I-ENC] external_aad.len=%d\r\n", external_aad.len);
 	print_hex("[I-ENC] external_aad (FULL): ", external_aad.ptr, external_aad.len);
 	print_hex("[I-ENC] CRED_I: ", cred_i->ptr, cred_i->len);
 	print_hex("[I-ENC] CRED_R: ", cred_r->ptr, cred_r->len);
@@ -429,7 +432,7 @@ enum err ciphertext_gen_psk_msg3(
 	}
 #ifdef DEBUG_PRINT
 	print_hex("[I-ENC] CIPHERTEXT_3B (final): ", ciphertext_3b.ptr, ciphertext_3b.len);
-	kprintf("==========================================\\r\\n\\r\\n");
+	kprintf("==========================================\r\n\r\n");
 #endif	/* Step 5: Create PLAINTEXT_3A = (ID_CRED_PSK, CIPHERTEXT_3B) with compact encoding */
 	uint8_t id_cred_compact[2];
 	if (id_cred_psk->len == 4 && id_cred_psk->ptr[0] == 0xa1 && id_cred_psk->ptr[1] == 0x04) {
@@ -544,7 +547,7 @@ enum err ciphertext_decrypt_split_psk_msg3(
 	BYTE_ARRAY_NEW(iv_3, AEAD_IV_SIZE, iv_len);
 	
 #ifdef DEBUG_PRINT
-	kprintf("\\r\\n========== RESPONDER: DECRYPT_3B ==========\\r\\n");
+	kprintf("\r\n========== RESPONDER: DECRYPT_3B ==========\r\n");
 #endif
 	TRY(edhoc_kdf(suite->edhoc_hash, prk_4e3m, K_3, th3, &k_3));
 #ifdef DEBUG_PRINT
@@ -575,7 +578,7 @@ enum err ciphertext_decrypt_split_psk_msg3(
 	TRY(byte_array_append(&external_aad, cred_r, external_aad_capacity));
 	
 #ifdef DEBUG_PRINT
-	kprintf("[R-DEC] external_aad.len=%d\\r\\n", external_aad.len);
+	kprintf("[R-DEC] external_aad.len=%d\r\n", external_aad.len);
 	print_hex("[R-DEC] external_aad (FULL): ", external_aad.ptr, external_aad.len);
 	print_hex("[R-DEC] CRED_I: ", cred_i.ptr, cred_i.len);
 	print_hex("[R-DEC] CRED_R: ", cred_r->ptr, cred_r->len);
@@ -605,7 +608,7 @@ enum err ciphertext_decrypt_split_psk_msg3(
 	/* TinyCrypt CCM expects ciphertext+tag in one buffer, don't modify ciphertext_3b */
 	TRY(aead(DECRYPT, &ciphertext_3b, &k_3, &iv_3, &external_aad, 
 	         &plaintext_3b, &tag_3b));
-	kprintf("==========================================\\r\\n\\r\\n");
+	kprintf("==========================================\r\n\r\n");
 	PRINT_ARRAY("PLAINTEXT_3B (decrypted)", plaintext_3b.ptr, plaintext_3b.len);
 	
 	/* Step 8: Extract ?EAD_3 from PLAINTEXT_3B */

@@ -1,0 +1,9 @@
+<map id="o_coap_packet" name="o_coap_packet">
+<area shape="rect" id="Node000001" title=" " alt="" coords="149,93,267,119"/>
+<area shape="rect" id="Node000002" href="$structo__coap__header.html" title=" " alt="" coords="5,5,125,31"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="97,35,190,91,187,95,95,40"/>
+<area shape="rect" id="Node000003" href="$structo__coap__option.html" title=" " alt="" coords="150,5,266,31"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="211,45,211,93,205,93,205,45"/>
+<area shape="rect" id="Node000004" href="$structbyte__array.html" title=" " alt="" coords="290,5,382,31"/>
+<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="312,41,268,72,229,96,226,91,265,67,308,37"/>
+</map>

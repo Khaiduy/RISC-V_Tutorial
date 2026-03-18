@@ -203,7 +203,8 @@ static inline enum err o_coap_pkg_generate(struct byte_array *decrypted_payload,
 {
 	uint8_t code = 0;
 	struct byte_array unprotected_o_coap_payload = BYTE_ARRAY_INIT(NULL, 0);
-	struct o_coap_option E_options[MAX_E_OPTION_COUNT];
+	/* Use static buffer to reduce stack usage */
+	static struct o_coap_option E_options[MAX_E_OPTION_COUNT];
 	uint8_t E_options_cnt = 0;
 
 	/* Parse decrypted payload: code + options + unprotected CoAP payload*/
@@ -257,7 +258,9 @@ decrypt_wrapper(struct byte_array *ciphertext, struct byte_array *plaintext,
 		struct o_coap_packet *input_oscore,
 		struct o_coap_packet *output_coap)
 {
-	BYTE_ARRAY_NEW(new_nonce, NONCE_LEN, NONCE_LEN);
+	/* Use static buffers to reduce stack usage on bare-metal systems */
+	static uint8_t new_nonce_buf[NONCE_LEN];
+	struct byte_array new_nonce = BYTE_ARRAY_INIT(new_nonce_buf, NONCE_LEN);
 	struct byte_array nonce;
 
 	/* Read necessary fields from the input packet. */
@@ -291,8 +294,8 @@ decrypt_wrapper(struct byte_array *ciphertext, struct byte_array *plaintext,
 		nonce = c->rrc.nonce;
 	}
 
-	/* compute AAD */
-	uint8_t aad_buf[MAX_AAD_LEN];
+	/* compute AAD - use static buffer to reduce stack usage */
+	static uint8_t aad_buf[MAX_AAD_LEN];
 	struct byte_array aad = BYTE_ARRAY_INIT(aad_buf, sizeof(aad_buf));
 	TRY(create_aad(NULL, 0, c->cc.aead_alg, &request_kid, &request_piv,
 		       &aad));
@@ -313,8 +316,9 @@ decrypt_wrapper(struct byte_array *ciphertext, struct byte_array *plaintext,
 	   Decrypted packet is used for URI Paths and message type, as original values are modified while encrypting. */
 	enum o_coap_msg msg_type;
 	TRY(coap_get_message_type(output_coap, &msg_type));
-	BYTE_ARRAY_NEW(uri_paths, OSCORE_MAX_URI_PATH_LEN,
-		       OSCORE_MAX_URI_PATH_LEN);
+	/* Use static buffer to reduce stack usage */
+	static uint8_t uri_paths_buf[OSCORE_MAX_URI_PATH_LEN];
+	struct byte_array uri_paths = BYTE_ARRAY_INIT(uri_paths_buf, OSCORE_MAX_URI_PATH_LEN);
 	TRY(uri_path_create(output_coap->options, output_coap->options_cnt,
 			    uri_paths.ptr, &(uri_paths.len)));
 	TRY(oscore_interactions_update_wrapper(msg_type, &token, &uri_paths,
@@ -327,8 +331,9 @@ decrypt_wrapper(struct byte_array *ciphertext, struct byte_array *plaintext,
 enum err oscore2coap(uint8_t *buf_in, uint32_t buf_in_len, uint8_t *buf_out,
 		     uint32_t *buf_out_len, struct context *c)
 {
-	struct o_coap_packet oscore_packet;
-	struct compressed_oscore_option oscore_option;
+	/* Use static to reduce stack usage on bare-metal systems */
+	static struct o_coap_packet oscore_packet;
+	static struct compressed_oscore_option oscore_option;
 	struct byte_array buf;
 
 	PRINT_MSG("\n\n\noscore2coap***************************************\r\n");
@@ -354,12 +359,21 @@ enum err oscore2coap(uint8_t *buf_in, uint32_t buf_in_len, uint8_t *buf_out,
 	/* Setup buffer for the plaintext. The plaintext is shorter than the 
 	ciphertext because of the authentication tag*/
 	uint32_t plaintext_bytes_len = ciphertext->len - AUTH_TAG_LEN;
-	BYTE_ARRAY_NEW(plaintext, MAX_PLAINTEXT_LEN, plaintext_bytes_len);
+	/* Use static buffer to reduce stack usage on bare-metal systems */
+	TRY(check_buffer_size(MAX_PLAINTEXT_LEN, plaintext_bytes_len));
+	static uint8_t plaintext_buf[MAX_PLAINTEXT_LEN];
+	struct byte_array plaintext;
+	if (plaintext_bytes_len == 0) {
+		plaintext = NULL_ARRAY;
+	} else {
+		plaintext.ptr = plaintext_buf;
+		plaintext.len = plaintext_bytes_len;
+	};
 	/* TODO plaintext can be moved inside decrypt_wrapper to simplify the code.
 	   To do so, refactor of echo_val_is_fresh is needed, to operate on o_coap_packet. */
 
-	/* Helper structure for decrypted coap packet */
-	struct o_coap_packet output_coap;
+	/* Helper structure for decrypted coap packet - static to reduce stack usage */
+	static struct o_coap_packet output_coap;
 
 	/*In requests the OSCORE packet contains at least a KID = sender ID 
         and eventually sender sequence number*/

@@ -62,8 +62,7 @@ msg1_parse(struct byte_array *msg1, enum method_type *method,
 	struct message_1 m;
 	size_t decode_len = 0;
 
-	TRY_EXPECT(cbor_decode_message_1(msg1->ptr, msg1->len, &m, &decode_len),
-		   0);
+	TRY_EXPECT(cbor_decode_message_1(msg1->ptr, msg1->len, &m, &decode_len), 0);
 
 	/*METHOD*/
 	if ((m.message_1_METHOD > INITIATOR_PSK_RESPONDER_PSK) ||
@@ -235,11 +234,23 @@ enum err msg2_gen(struct edhoc_responder_context *c, struct runtime_context *rc,
 #ifdef DEBUG_PRINT
 	kprintf("[R] Computing TH_2...\r\n");
 #endif
+	uint64_t t_hash_start, t_hash_end;
+	__asm__ volatile ("rdcycle %0" : "=r"(t_hash_start));
 	TRY(hash(rc->suite.edhoc_hash, &rc->msg, &rc->msg1_hash));
+	__asm__ volatile ("rdcycle %0" : "=r"(t_hash_end));
+#ifdef TIMING_PRINT
+	kprintf("[TIMING-R] hash(msg1): %lu cycles\r\n", (unsigned long)(t_hash_end - t_hash_start));
+#endif
 #ifdef DEBUG_PRINT
 	kprintf("[R] hash OK\r\n");
 #endif
+	uint64_t t_th2_start, t_th2_end;
+	__asm__ volatile ("rdcycle %0" : "=r"(t_th2_start));
 	TRY(th2_calculate(rc->suite.edhoc_hash, &rc->msg1_hash, &c->g_y, &th2));
+	__asm__ volatile ("rdcycle %0" : "=r"(t_th2_end));
+#ifdef TIMING_PRINT
+	kprintf("[TIMING-R] th2_calculate: %lu cycles\r\n", (unsigned long)(t_th2_end - t_th2_start));
+#endif
 #ifdef DEBUG_PRINT
 	kprintf("[R] th2 OK\r\n");
 #endif
@@ -249,9 +260,13 @@ enum err msg2_gen(struct edhoc_responder_context *c, struct runtime_context *rc,
 #ifdef DEBUG_PRINT
 	kprintf("[R] Computing ECDH shared secret (ecdh_alg=%d)...\r\n", rc->suite.edhoc_ecdh);
 #endif
-	// TIMING_START(ecdh);
+	uint64_t t_ecdh_start, t_ecdh_end;
+	__asm__ volatile ("rdcycle %0" : "=r"(t_ecdh_start));
 	TRY(shared_secret_derive(rc->suite.edhoc_ecdh, &c->y, &g_x, g_xy.ptr));
-	// TIMING_END(ecdh, "ECDH shared_secret_derive");
+	__asm__ volatile ("rdcycle %0" : "=r"(t_ecdh_end));
+#ifdef TIMING_PRINT
+	kprintf("[TIMING-R] shared_secret_derive(X25519): %lu cycles\r\n", (unsigned long)(t_ecdh_end - t_ecdh_start));
+#endif
 #ifdef DEBUG_PRINT
 	kprintf("[R] shared_secret_derive OK\r\n");
 
@@ -259,11 +274,15 @@ enum err msg2_gen(struct edhoc_responder_context *c, struct runtime_context *rc,
 #endif
 
 	BYTE_ARRAY_NEW(PRK_2e, PRK_SIZE, PRK_SIZE);
-	// TIMING_START(prk2e);
+	uint64_t t_hkdf_start, t_hkdf_end;
+	__asm__ volatile ("rdcycle %0" : "=r"(t_hkdf_start));
 	TRY(hkdf_extract(rc->suite.edhoc_hash, &th2, &g_xy, PRK_2e.ptr));
-	// TIMING_END(prk2e, "PRK_2e extraction");
+	__asm__ volatile ("rdcycle %0" : "=r"(t_hkdf_end));
+#ifdef TIMING_PRINT
+	kprintf("[TIMING-R] hkdf_extract(PRK_2e): %lu cycles\r\n", (unsigned long)(t_hkdf_end - t_hkdf_start));
+#endif
 #ifdef DEBUG_PRINT
-	PRINT_ARRAY("PRK_2e\r\n", PRK_2e.ptr, PRK_2e.len);
+	PRINT_ARRAY("PRK_2e \r\n", PRK_2e.ptr, PRK_2e.len);
 #endif
 
 	/* PSK mode: PRK_3e2m = PRK_2e (no static DH, per draft section 5.1) */
@@ -279,19 +298,38 @@ enum err msg2_gen(struct edhoc_responder_context *c, struct runtime_context *rc,
 	BYTE_ARRAY_NEW(ciphertext_2, CIPHERTEXT2_SIZE, plaintext_2_len);
 
 	/* PSK Mode: Encrypt PLAINTEXT_2A with no ID_CRED_R or MAC_2 */
+	uint64_t t_encrypt_start, t_encrypt_end;
+	__asm__ volatile ("rdcycle %0" : "=r"(t_encrypt_start));
 	TRY(ciphertext_gen_psk(CIPHERTEXT2, &rc->suite, &c->c_r, &c->ead_2,
 			       &PRK_2e, &th2, &ciphertext_2, &plaintext_2));
+	__asm__ volatile ("rdcycle %0" : "=r"(t_encrypt_end));
+#ifdef TIMING_PRINT
+	kprintf("[TIMING-R] ciphertext_gen_psk(msg2): %lu cycles\r\n", (unsigned long)(t_encrypt_end - t_encrypt_start));
+#endif
 
 	/* Clear the message buffer. */
 	memset(rc->msg.ptr, 0, rc->msg.len);
 	rc->msg.len = sizeof(rc->msg_buf);
 	/*message 2 create*/
+#ifdef DEBUG_PRINT
+	kprintf("[R] Encoding message_2 with G_Y:\r\n");
+	PRINT_ARRAY("  G_Y", c->g_y.ptr, c->g_y.len);
+#endif
 	TRY(msg2_encode(&c->g_y, &c->c_r, &ciphertext_2, &rc->msg));
+#ifdef DEBUG_PRINT
+	kprintf("[R] message_2 encoded, length=%d\r\n", rc->msg.len);
+	PRINT_ARRAY("  MSG2", rc->msg.ptr, rc->msg.len);
+#endif
 
 	/* PSK mode: TH_3 = H(TH_2, PLAINTEXT_2A) - NO CRED_R */
+	uint64_t t_th3_start, t_th3_end;
+	__asm__ volatile ("rdcycle %0" : "=r"(t_th3_start));
 	TRY(th3_calculate_psk(rc->suite.edhoc_hash, &th2, &plaintext_2, &rc->th3));
+	__asm__ volatile ("rdcycle %0" : "=r"(t_th3_end));
+#ifdef TIMING_PRINT
+	kprintf("[TIMING-R] th3_calculate_psk: %lu cycles\r\n", (unsigned long)(t_th3_end - t_th3_start));
+#endif
 
-	// TIMING_END(msg2_gen, "msg2_gen TOTAL");
 	return ok;
 }
 
@@ -332,29 +370,38 @@ enum err msg3_process(struct edhoc_responder_context *c,
 	BYTE_ARRAY_NEW(g_i, G_I_SIZE, G_I_SIZE);
 	
 	/*derive prk_4e3m BEFORE decryption in PSK mode (needed for K_3/IV_3)*/
-	// TIMING_START(prk4e3m);
 	if (rc->is_psk) {
 		/* PSK mode: PRK_4e3m = EDHOC_Extract(SALT_4e3m, PSK) */
 #ifdef DEBUG_PRINT
 		kprintf("[R] Deriving PRK_4e3m from PSK (len=%d)...\r\n", c->psk.len);
 #endif
+		uint64_t t_prk4_start, t_prk4_end;
+		__asm__ volatile ("rdcycle %0" : "=r"(t_prk4_start));
 		TRY(prk_derive_psk(rc->suite, &rc->th3, &rc->prk_3e2m, &c->psk,
 				   rc->prk_4e3m.ptr));
+		__asm__ volatile ("rdcycle %0" : "=r"(t_prk4_end));
+#ifdef TIMING_PRINT
+		kprintf("[TIMING-R] prk_derive_psk(PRK_4e3m): %lu cycles\r\n", (unsigned long)(t_prk4_end - t_prk4_start));
+#endif
 #ifdef DEBUG_PRINT
 		kprintf("[R] PRK_4e3m derived from PSK\r\n");
 #endif
 	}
-	// TIMING_END(prk4e3m, "PRK_4e3m derivation");
 #ifdef DEBUG_PRINT
 	PRINT_ARRAY("prk_4e3m", rc->prk_4e3m.ptr, rc->prk_4e3m.len);
 #endif
 	
 	/* PSK mode: Use PSK-specific Message 3 decryption (no sig_or_mac) */
+	uint64_t t_decrypt_start, t_decrypt_end;
+	__asm__ volatile ("rdcycle %0" : "=r"(t_decrypt_start));
 	TRY(ciphertext_decrypt_split_psk_msg3(&rc->suite, &id_cred_i, &rc->ead,
 					      &rc->prk_3e2m, &rc->th3, &rc->prk_4e3m,
 					      cred_i_array, &c->cred_r,
 					      &ctxt3, &ptxt3));
-	// TIMING_END(decrypt3, "Decrypt CIPHERTEXT_3");
+	__asm__ volatile ("rdcycle %0" : "=r"(t_decrypt_end));
+#ifdef TIMING_PRINT
+	kprintf("[TIMING-R] ciphertext_decrypt_split_psk_msg3: %lu cycles\r\n", (unsigned long)(t_decrypt_end - t_decrypt_start));
+#endif
 	
 	/* PSK mode: use id_cred_i as ID_CRED_PSK to retrieve credentials */
 	TRY(retrieve_cred(cred_i_array, &id_cred_i, &cred_i,
@@ -380,15 +427,24 @@ enum err msg3_process(struct edhoc_responder_context *c,
 	/* PSK mode: TH_4 = H(TH_3, ID_CRED_PSK, PLAINTEXT_3B, CRED_I, CRED_R)
 	 * where ID_CRED_PSK = ID_CRED_I and PLAINTEXT_3B = (?EAD_3)
 	 */
+	uint64_t t_th4_start, t_th4_end;
+	__asm__ volatile ("rdcycle %0" : "=r"(t_th4_start));
 	TRY(th4_calculate_psk(rc->suite.edhoc_hash, &rc->th3, &id_cred_i,
 			      &ptxt3, &cred_i, &c->cred_r, &rc->th4));
+	__asm__ volatile ("rdcycle %0" : "=r"(t_th4_end));
+#ifdef TIMING_PRINT
+	kprintf("[TIMING-R] th4_calculate_psk: %lu cycles\r\n", (unsigned long)(t_th4_end - t_th4_start));
+#endif
 
 	/*PRK_out*/
-	// TIMING_START(prk_out_derive);
+	uint64_t t_kdf_start, t_kdf_end;
+	__asm__ volatile ("rdcycle %0" : "=r"(t_kdf_start));
 	TRY(edhoc_kdf(rc->suite.edhoc_hash, &rc->prk_4e3m, PRK_out, &rc->th4,
 		      prk_out));
-	// TIMING_END(prk_out_derive, "PRK_out derivation");
-	// TIMING_END(msg3_process, "msg3_process TOTAL");
+	__asm__ volatile ("rdcycle %0" : "=r"(t_kdf_end));
+#ifdef TIMING_PRINT
+	kprintf("[TIMING-R] edhoc_kdf(PRK_out): %lu cycles\r\n", (unsigned long)(t_kdf_end - t_kdf_start));
+#endif
 	return ok;
 }
 

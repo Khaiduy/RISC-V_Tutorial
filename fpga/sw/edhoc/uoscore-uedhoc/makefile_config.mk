@@ -19,13 +19,13 @@
 ################################################################################ 
 # Compiler optimization
 ################################################################################ 
-OPT = -O0
+OPT = -Os
 
 
 ################################################################################
 # Print helpful debug messages
 ################################################################################
-DEBUG_PRINT += -DDEBUG_PRINT
+# DEBUG_PRINT += -DDEBUG_PRINT
 
 ################################################################################
 # Use Address Sanitizer, e.g. with native_posix
@@ -72,16 +72,16 @@ FEATURES += -DC_I_SIZE=1
 FEATURES += -DC_R_SIZE=1
 
 # Size of ID_CRED_R
-FEATURES += -DID_CRED_R_SIZE=296 
+FEATURES += -DID_CRED_R_SIZE=16 
 
 # Size of ID_CRED_I
-FEATURES += -DID_CRED_I_SIZE=296 
+FEATURES += -DID_CRED_I_SIZE=16 
 
 # Size of CRED_R
-FEATURES += -DCRED_R_SIZE=293 
+FEATURES += -DCRED_R_SIZE=64 
 
 # Size of CRED_I
-FEATURES += -DCRED_I_SIZE=293 
+FEATURES += -DCRED_I_SIZE=64 
 
 # Number of supported suites by the initiator
 FEATURES += -DSUITES_I_SIZE=1 
@@ -90,7 +90,7 @@ FEATURES += -DSUITES_I_SIZE=1
 # RAM optimization OSCORE
 ################################################################################
 # Max size of an OSCORE plaintext
-FEATURES += -DOSCORE_MAX_PLAINTEXT_LEN=1024
+FEATURES += -DOSCORE_MAX_PLAINTEXT_LEN=128
 
 # Max size of the E options buffer
 FEATURES += -DE_OPTIONS_BUFF_MAX_LEN=100
@@ -157,6 +157,8 @@ FEATURES += -DI_OPTIONS_BUFF_MAX_LEN=100
 # | EDHOC  | 0/1/2/3 | 0/1/2/3 | MBEDTLS and COMPACT25519
 
 
-#CRYPTO_ENGINE += -DTINYCRYPT
-CRYPTO_ENGINE += -DCOMPACT25519
-CRYPTO_ENGINE += -DMBEDTLS
+CRYPTO_ENGINE += -DTINYCRYPT
+CRYPTO_ENGINE += -DMONOCYPHER
+#CRYPTO_ENGINE += -DMONOCYPHER
+#
+#CRYPTO_ENGINE += -DMBEDTLS

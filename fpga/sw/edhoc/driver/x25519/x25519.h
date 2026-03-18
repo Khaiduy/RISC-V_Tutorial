@@ -23,8 +23,7 @@
 #define _REG32(p, i) (*(volatile uint32_t *)((p) + (i)))
 #define _REG16(p, i) (*(volatile uint16_t *)((p) + (i)))
 
-#define X25519_CTRL_ADDR _AC(0x64004000,UL)
-#define X25519_CTRL_SIZE _AC(0x1000,UL)
+#define X25519_CTRL_ADDR 0x64004000UL
 static volatile uint64_t * const x25519 = (void *)(X25519_CTRL_ADDR);
 extern uintptr_t X25519_reg;
 
@@ -32,6 +31,18 @@ extern uintptr_t X25519_reg;
 void hwx25519_init(void* x25519ctrl, uint64_t scalar[4], uint64_t point_in[4]);
 void hwx25519_results(void* x25519ctrl, uint64_t* result);
 void hwx25519_reset(void* x25519ctrl);
-// void hwx25519_selftest(void* x25519ctrl);
 
-// void print_x25519_value(const char* label, uint64_t* value);  // Optional helper
+// 32-bit byte-level versions for RV32 systems (recommended for 32-bit CPUs)
+// These take raw byte arrays and handle all byte ordering internally
+void hwx25519_init32_bytes(void* x25519ctrl, const uint8_t scalar[32], const uint8_t point_in[32]);
+
+void hwx25519_compute_debug(void* x25519ctrl, const uint8_t scalar[32], const uint8_t point_in[32], uint8_t* result);
+
+
+void hwx25519_results32_bytes(void* x25519ctrl, uint8_t* result);
+
+// Self-test function
+void hwx25519_selftest(void* x25519ctrl);
+
+// Test function
+void x25519_hardware_software_test(void);

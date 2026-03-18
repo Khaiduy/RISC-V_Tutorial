@@ -9,8 +9,9 @@
 #include <stdint.h>
 #include <stdarg.h>
 
-// Forward declaration of kprintf (if available)
+// Forward declarations of bare-metal print functions
 extern int kprintf(const char *format, ...);
+extern void vkprintf(const char *format, va_list vl);
 
 // ============================================
 // Memory Functions
@@ -45,6 +46,21 @@ size_t strlen(const char *s) {
     }
     
     return len;
+}
+
+char *strncpy(char *dest, const char *src, size_t n) {
+    size_t i;
+    
+    for (i = 0; i < n && src[i] != '\0'; i++) {
+        dest[i] = src[i];
+    }
+    
+    // Pad with null bytes if needed
+    for (; i < n; i++) {
+        dest[i] = '\0';
+    }
+    
+    return dest;
 }
 
 int memcmp(const void *s1, const void *s2, size_t n) {
@@ -88,20 +104,10 @@ void *memmove(void *dest, const void *src, size_t n) {
 // ============================================
 
 int printf(const char *format, ...) {
-    // For EDHOC demo, we can either:
-    // 1. Use kprintf if available
-    // 2. Just return 0 (no-op) to save code size
-    
-    // Option 1: Use kprintf
     va_list args;
     va_start(args, format);
-    // Note: This requires kprintf to accept va_list, or we skip it
+    vkprintf(format, args);
     va_end(args);
-    
-    // Option 2: No-op (uncomment to disable printf completely)
-    // (void)format;
-    // return 0;
-    
     return 0;
 }
 

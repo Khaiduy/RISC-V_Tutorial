@@ -25,13 +25,11 @@ void kputs(const char *s)
 	kputc('\n');
 }
 
-void kprintf(const char *fmt, ...)
+void vkprintf(const char *fmt, va_list vl)
 {
-	va_list vl;
 	bool is_format, is_long, is_char;
 	char c;
 
-	va_start(vl, fmt);
 	is_format = false;
 	is_long = false;
 	is_char = false;
@@ -39,6 +37,16 @@ void kprintf(const char *fmt, ...)
 	while ((c = *fmt++) != '\0') {
 		if (is_format) {
 			switch (c) {
+			/* Flag: zero-pad — consume and ignore (is_char already
+			 * prints exactly 2 hex digits, so %02hX == %hX for us) */
+			case '0':
+				continue;
+
+			/* Width digits — consume and ignore */
+			case '1': case '2': case '3': case '4': case '5':
+			case '6': case '7': case '8': case '9':
+				continue;
+
 			case 'l':
 				is_long = true;
 				continue;
@@ -64,11 +72,15 @@ void kprintf(const char *fmt, ...)
 						}
 					}
 				} else {
-					// Handle %d - unsigned int decimal
-					unsigned int n = va_arg(vl, unsigned int);
+					// Handle %d - signed int decimal
+					int n = va_arg(vl, int);
 					char buf[16];
 					int idx = 0;
 					
+					if (n < 0) {
+						kputc('-');
+						n = -n;
+					}
 					if (n == 0) {
 						kputc('0');
 					} else {
@@ -128,9 +140,12 @@ void kprintf(const char *fmt, ...)
 				is_char = true;
 				continue;
 				
+			case 'X':
 			case 'x': {
 				unsigned long n;
 				long i;
+				/* uppercase X uses 'A'-'F', lowercase x uses 'a'-'f' */
+				bool upper = (c == 'X');
 				if (is_long) {
 					n = va_arg(vl, unsigned long);
 					i = (sizeof(unsigned long) << 3) - 4;
@@ -156,7 +171,10 @@ void kprintf(const char *fmt, ...)
 				for (; i >= 0; i -= 4) {
 					long d;
 					d = (n >> i) & 0xF;
-					kputc(d < 10 ? '0' + d : 'a' + d - 10);
+					if (d < 10)
+						kputc('0' + d);
+					else
+						kputc((upper ? 'A' : 'a') + d - 10);
 				}
 				break;
 			}
@@ -187,8 +205,19 @@ void kprintf(const char *fmt, ...)
 		} else if (c == '%') {
 			is_format = true;
 		} else {
+			/* On serial terminals \n alone doesn't return to col 0;
+			 * auto-emit \r before every \n. */
+			if (c == '\n')
+				kputc('\r');
 			kputc(c);
 		}
 	}
+}
+
+void kprintf(const char *fmt, ...)
+{
+	va_list vl;
+	va_start(vl, fmt);
+	vkprintf(fmt, vl);
 	va_end(vl);
 }

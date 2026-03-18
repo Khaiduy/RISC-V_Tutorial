@@ -72,7 +72,6 @@ enum err prk_derive_psk(struct suite suite, struct byte_array *context,
 	TRY(hkdf_extract(suite.edhoc_hash, &salt_4e3m, (struct byte_array *)psk, prk_out));
 #ifdef DEBUG_PRINT
 	kprintf("[PRK_PSK] PRK_4e3m: "); PRINT_ARRAY("", prk_out, get_hash_len(suite.edhoc_hash));
-	kprintf("===============================================\r\n\r\n");
 #endif
 	
 	return ok;

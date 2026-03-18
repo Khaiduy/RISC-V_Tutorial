@@ -22,6 +22,7 @@ enum suite_label {
 	SUITE_1 = 1,
 	SUITE_2 = 2,
 	SUITE_3 = 3,
+	SUITE_7 = 7,
 };
 
 enum aead_alg {

@@ -1,0 +1,6 @@
+CC = gcc
+CFLAGS = -g -Wall -Iuoscore-uedhoc/inc -Iuoscore-uedhoc/inc/common -Iuoscore-uedhoc/externals/zcbor/include
+LDFLAGS = -Luoscore-uedhoc/build -luoscore-uedhoc
+
+test_cbor: test_cbor.c
+$(CC) $(CFLAGS) test_cbor.c $(LDFLAGS) -o test_cbor
