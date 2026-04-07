@@ -99,12 +99,36 @@ class SDIOArtyPlacedOverlay(val shell: Arty35TShellCustomOverlays, name: String,
   extends SDIOXilinxPlacedOverlay(name, designInput, shellInput)
 {
   shell { InModuleBody {
-    val packagePinsWithPackageIOs = Seq(("D12", IOPin(io.spi_clk)),
-      ("B11", IOPin(io.spi_cs)),
-      ("A11", IOPin(io.spi_dat(0))),
-      ("D13", IOPin(io.spi_dat(1))),
-      ("B18", IOPin(io.spi_dat(2))),
-      ("G13", IOPin(io.spi_dat(3))))
+    // SPI0: PMOD JA (SD Card), SPI1: PMOD JB, SPI2: PMOD JD
+    // PMOD JC is used by UART
+    val spiIndex = name match {
+      case n if n.contains("_0") => 0
+      case n if n.contains("_1") => 1
+      case n if n.contains("_2") => 2
+      case _ => 0
+    }
+    
+    val packagePinsWithPackageIOs = spiIndex match {
+      case 0 => Seq(("D12", IOPin(io.spi_clk)),  // SPI0 - PMOD JA (SD Card)
+        ("B11", IOPin(io.spi_cs)),
+        ("A11", IOPin(io.spi_dat(0))),
+        ("D13", IOPin(io.spi_dat(1))),
+        ("B18", IOPin(io.spi_dat(2))),
+        ("G13", IOPin(io.spi_dat(3))))
+      case 1 => Seq(("E15", IOPin(io.spi_clk)),  // SPI1 - PMOD JB
+        ("E16", IOPin(io.spi_cs)),
+        ("D15", IOPin(io.spi_dat(0))),
+        ("C15", IOPin(io.spi_dat(1))),
+        ("J17", IOPin(io.spi_dat(2))),
+        ("J18", IOPin(io.spi_dat(3))))
+      case 2 => Seq(("H15", IOPin(io.spi_clk)),  // SPI2 - PMOD JD
+        ("R15", IOPin(io.spi_cs)),
+        ("K16", IOPin(io.spi_dat(0))),
+        ("J15", IOPin(io.spi_dat(1))),
+        ("U12", IOPin(io.spi_dat(2))),
+        ("T13", IOPin(io.spi_dat(3))))
+      case _ => Seq()
+    }
 
     packagePinsWithPackageIOs foreach { case (pin, io) => {
       shell.xdc.addPackagePin(io, pin)
@@ -131,12 +155,8 @@ class GPIOArtyPlacedOverlay(val shell: Arty35TShellCustomOverlays,
   extends GPIOXilinxPlacedOverlay(name, designInput, shellInput)
 {
   shell { InModuleBody {
-    val gpioLocations = List("H5", "J5", "T9", "T10",    // LEDs
-                            "E1", "F6", "G6", "G4",     // RGB LEDs
-                            "J4", "G3", "H4", "J2",
-                            "J3", "K2", "H6", "K1",
-                            "A8", "C11", "C10", "A10", // Switches
-                            "D9", "C9", "B9", "B8")     // Buttons
+    val gpioLocations = List("H5", "J5", "T9", "T10",    // 4 LEDs
+                            "E1", "F6", "G6", "G4")     // 4 RGB LEDs (one color each)
     val iosWithLocs = io.gpio.zip(gpioLocations)
     val packagePinsWithPackageIOs = iosWithLocs.map { case (io, pin) => (pin, IOPin(io)) }
 

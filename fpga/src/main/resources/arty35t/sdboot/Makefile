@@ -19,9 +19,20 @@ endif
 CFLAGS=$(ARCH_FLAGS) -mcmodel=medany -O2 -std=gnu11 -Wall -nostartfiles -nostdlib -nodefaultlibs
 CFLAGS+= -fno-common -g -DENTROPY=0 -DNONSMP_HART=0
 CFLAGS+= -I $(ROOT_DIR)/include -I.
-LFLAGS=-static -nostdlib -L $(ROOT_DIR)/linker -T sdboot.elf.lds
 
 PBUS_CLK ?= 1000000 # default to 1MHz but really should be overridden
+
+# SRAM_SIZE: target scratchpad size in bytes (hex).
+# 0x10000 = 64 kB (SmallRocket32Config, SmallRocket32M3Config).
+SRAM_SIZE ?= 0x10000
+CFLAGS += -DSRAM_SIZE=$(SRAM_SIZE)
+
+# Choose linker script that matches the target SRAM region.
+ifeq ($(SRAM_SIZE),0x2000)
+  LFLAGS=-static -nostdlib -L $(ROOT_DIR)/linker -T sdboot_m3.elf.lds
+else
+  LFLAGS=-static -nostdlib -L $(ROOT_DIR)/linker -T sdboot.elf.lds
+endif
 
 default: elf bin dump
 

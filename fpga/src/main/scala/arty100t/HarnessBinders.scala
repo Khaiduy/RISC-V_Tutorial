@@ -44,9 +44,21 @@ class WithArty100TUARTHarnessBinder extends OverrideHarnessBinder({
 class WithArty100TSPISDCardHarnessBinder extends OverrideHarnessBinder({
   (system: HasPeripherySPI, th: BaseModule, ports: Seq[SPIPortIO]) => {
     th match {
-      case ath: Arty100TwoDDRHarnessImp => ath.athOuter.io_spi_bb.bundle <> ports.head
-      case ath: Arty100TDDRHarnessImp => ath.athOuter.io_spi_bb.bundle <> ports.head
-      case ath: Arty100TWithoutDDRHarnessImp => ath.athOuter.io_spi_bb.bundle <> ports.head
+      case ath: Arty100TwoDDRHarnessImp => {
+        (ath.athOuter.io_spi_bb zip ports).foreach { case (bb, port) =>
+          bb.bundle <> port
+        }
+      }
+      case ath: Arty100TDDRHarnessImp => {
+        (ath.athOuter.io_spi_bb zip ports).foreach { case (bb, port) =>
+          bb.bundle <> port
+        }
+      }
+      case ath: Arty100TWithoutDDRHarnessImp => {
+        (ath.athOuter.io_spi_bb zip ports).foreach { case (bb, port) =>
+          bb.bundle <> port
+        }
+      }
     }
   }
 })

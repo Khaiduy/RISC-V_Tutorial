@@ -1,5 +1,5 @@
 CC = /home/khaiduy/opt/riscv/bin/riscv64-unknown-elf-gcc
-AR = /home/khaiduy/opt/riscv/bin/riscv64-unknown-elf-ar
+AR = /home/khaiduy/opt/riscv/bin/riscv64-unknown-elf-gcc-ar
 OBJCOPY = /home/khaiduy/opt/riscv/bin/riscv64-unknown-elf-objcopy
 SIZE = /home/khaiduy/opt/riscv/bin/riscv64-unknown-elf-size
 
@@ -13,9 +13,9 @@ ARCH_FLAGS = -march=rv32imac_zicsr_zifencei -mabi=ilp32 -mcmodel=medany
 # DEBUG=0 (default) gives clean timing measurements
 DEBUG ?= 0
 
-CFLAGS = $(ARCH_FLAGS) -Os  -g0 -ffunction-sections -fdata-sections -Wunused-function
+CFLAGS = $(ARCH_FLAGS) -Os -flto -g0 -ffunction-sections -fdata-sections -Wunused-function
 CFLAGS += -fno-unwind-tables -fno-asynchronous-unwind-tables
-CFLAGS += -nostartfiles -nostdlib -nodefaultlibs -fno-builtin
+CFLAGS += -nostartfiles -nostdlib -nodefaultlibs -fno-builtin -fno-tree-loop-distribute-patterns
 CFLAGS += -Wall -Wextra -DMONOCYPHER -DMESSAGE_4 -DZCBOR_CANONICAL -DTIMING_BREAKDOWN
 ifeq ($(DEBUG),1)
 CFLAGS += -DDEBUG_PRINT
@@ -40,11 +40,12 @@ else
 $(error Invalid CRYPTO_SUITE=$(CRYPTO_SUITE). Use 0, 1, or 7)
 endif
 
-LDFLAGS = $(ARCH_FLAGS) -T linker/main.lds  -Llinker
-LDFLAGS += -fno-builtin -fno-unwind-tables -fno-asynchronous-unwind-tables
+LDFLAGS = $(ARCH_FLAGS) -flto -T linker/main.lds  -Llinker
+LDFLAGS += -fno-builtin -fno-tree-loop-distribute-patterns -fno-unwind-tables -fno-asynchronous-unwind-tables
 LDFLAGS += -nostartfiles -nostdlib -nodefaultlibs
 LDFLAGS += -Wl,--gc-sections -Wl,-Map=$(BUILD_DIR)/$(TARGET).map
 LDFLAGS += -Wl,--allow-multiple-definition
+LDFLAGS += -Wl,--undefined=memset -Wl,--undefined=memcpy -Wl,--undefined=memmove
 
 # EDHOC library selection (default: PSK-only)
 # Use 'make EDHOC_MODE=original' for original Method 0-3
@@ -232,6 +233,54 @@ edhoc_hw_responder:
 		LIBS="-lgcc"
 
 # ============================================================================
+# EDHOC Method 3 Hardware-Accelerated Targets (SmallRocket32M3Config)
+# edhoc_m3_top handles all crypto in hardware (X25519, AES-CCM, HMAC-SHA256).
+# No software crypto library needed — binary is small enough for 8 kB scratchpad.
+# Base address must match WithEDHOCM3(address = 0x64004000) in Scala config.
+# ============================================================================
+M3_HW_CFLAGS = $(ARCH_FLAGS) -Os -flto -g0 -ffunction-sections -fdata-sections
+M3_HW_CFLAGS += -fno-unwind-tables -fno-asynchronous-unwind-tables
+M3_HW_CFLAGS += -nostartfiles -nostdlib -nodefaultlibs -fno-builtin -fno-tree-loop-distribute-patterns
+M3_HW_CFLAGS += -Wall -Wextra -DEDHOC_M3_BASE=0x64004000UL -DINCLUDE_OSCORE
+
+M3_HW_LDFLAGS = $(ARCH_FLAGS) -flto -T linker/main_m3.lds -Llinker
+M3_HW_LDFLAGS += -fno-builtin -fno-tree-loop-distribute-patterns -fno-unwind-tables -fno-asynchronous-unwind-tables
+M3_HW_LDFLAGS += -nostartfiles -nostdlib -nodefaultlibs
+M3_HW_LDFLAGS += -Wl,--gc-sections -Wl,-Map=$(BUILD_DIR)/$(TARGET).map
+
+edhoc_m3_initiator_hw:
+	@echo "Building EDHOC Method 3 hardware-accelerated initiator (8 kB, no SW crypto)..."
+	@$(MAKE) all TARGET=edhoc_m3_initiator_hw \
+		CFLAGS="$(M3_HW_CFLAGS)" \
+		LDFLAGS="$(M3_HW_LDFLAGS)" \
+		C_SOURCES="src/edhoc_m3_initiator_hw.c src/kprintf.c src/libc_stubs.c" \
+		ASM_SOURCES="src/crt0.S" \
+		EXTRA_INCLUDES="-Idriver/edhoc_m3" \
+		LIBS="-lgcc"
+
+edhoc_m3_responder_hw:
+	@echo "Building EDHOC Method 3 hardware-accelerated responder (8 kB, no SW crypto)..."
+	@$(MAKE) all TARGET=edhoc_m3_responder_hw \
+		CFLAGS="$(M3_HW_CFLAGS)" \
+		LDFLAGS="$(M3_HW_LDFLAGS)" \
+		C_SOURCES="src/edhoc_m3_responder_hw.c src/kprintf.c src/libc_stubs.c" \
+		ASM_SOURCES="src/crt0.S" \
+		EXTRA_INCLUDES="-Idriver/edhoc_m3" \
+		LIBS="-lgcc"
+
+# Hardware OSCORE benchmark: runs EDHOC handshake then sweeps payload sizes
+# using ext_aead. Compare results with: make oscore_benchmark (SW baseline)
+oscore_benchmark_hw:
+	@echo "Building OSCORE hardware benchmark (ext_aead, 8 kB, no SW crypto)..."
+	@$(MAKE) all TARGET=oscore_benchmark_hw \
+		CFLAGS="$(M3_HW_CFLAGS)" \
+		LDFLAGS="$(M3_HW_LDFLAGS)" \
+		C_SOURCES="src/oscore_benchmark_hw.c src/kprintf.c src/libc_stubs.c" \
+		ASM_SOURCES="src/crt0.S" \
+		EXTRA_INCLUDES="-Idriver/edhoc_m3" \
+		LIBS="-lgcc"
+
+# ============================================================================
 # EDHOC Method 3 Targets (Static DH / Static DH)
 # Uses the full uoscore-uedhoc library (not PSK-only)
 # Only supports Suite 0 and Suite 1 (X25519 + AES-CCM + SHA256)
@@ -249,7 +298,9 @@ M3_COMMON_SRC += $(M3_EDHOC_LIB)/externals/zcbor/src/zcbor_decode.c
 # M3_COMMON_SRC += $(M3_EDHOC_LIB)/externals/compact25519/src/c25519/c25519.c
 # M3_COMMON_SRC += $(M3_EDHOC_LIB)/externals/compact25519/src/c25519/f25519.c
 # M3_COMMON_SRC += $(M3_EDHOC_LIB)/externals/compact25519/src/c25519/fprime.c
-M3_COMMON_SRC += $(M3_EDHOC_LIB)/externals/Monocypher/src/monocypher.c $(M3_EDHOC_LIB)/externals/Monocypher/src/optional/monocypher-ed25519.c
+M3_COMMON_SRC += $(M3_EDHOC_LIB)/externals/Monocypher/src/monocypher.c
+# Ed25519 only needed for methods 0/1/2 (signature-based auth); not needed for M3 (static DH only)
+M_ED25519_SRC = $(M3_EDHOC_LIB)/externals/Monocypher/src/optional/monocypher-ed25519.c
 
 
 
@@ -275,9 +326,9 @@ edhoc_m0_initiator:
 	@$(MAKE) -C $(M3_EDHOC_LIB) CC="$(CC)" AR="$(AR)" CFLAGS="$(CFLAGS)" CRYPTO_SUITE=$(CRYPTO_SUITE) DEBUG=$(DEBUG)
 	@echo "Building Method 0 initiator (Suite $(CRYPTO_SUITE))..."
 	@$(MAKE) all TARGET=edhoc_m0_initiator EDHOC_LIB_DIR=$(M3_EDHOC_LIB) \
-		C_SOURCES="src/edhoc_initiator_m0.c $(M3_COMMON_SRC) $(M3_CRYPTO_SRC)" \
+		C_SOURCES="src/edhoc_initiator_m0.c $(M3_COMMON_SRC) $(M_ED25519_SRC) $(M3_CRYPTO_SRC)" \
 		ASM_SOURCES="src/crt0.S" \
-		INCLUDES="$(INCLUDES) $(M3_INCLUDES)"
+		INCLUDES="$(M3_INCLUDES)" EDHOC_MODE=original
 
 edhoc_m0_responder:
 	@echo "Building EDHOC Method 0 Responder with CRYPTO_SUITE=$(CRYPTO_SUITE)..."
@@ -285,9 +336,9 @@ edhoc_m0_responder:
 	@$(MAKE) -C $(M3_EDHOC_LIB) CC="$(CC)" AR="$(AR)" CFLAGS="$(CFLAGS)" CRYPTO_SUITE=$(CRYPTO_SUITE) DEBUG=$(DEBUG)
 	@echo "Building Method 0 responder (Suite $(CRYPTO_SUITE))..."
 	@$(MAKE) all TARGET=edhoc_m0_responder EDHOC_LIB_DIR=$(M3_EDHOC_LIB) \
-		C_SOURCES="src/edhoc_responder_m0.c $(M3_COMMON_SRC) $(M3_CRYPTO_SRC)" \
+		C_SOURCES="src/edhoc_responder_m0.c $(M3_COMMON_SRC) $(M_ED25519_SRC) $(M3_CRYPTO_SRC)" \
 		ASM_SOURCES="src/crt0.S" \
-		INCLUDES="$(INCLUDES) $(M3_INCLUDES)"
+		INCLUDES="$(M3_INCLUDES)" EDHOC_MODE=original
 
 edhoc_m1_initiator:
 	@echo "Building EDHOC Method 1 Initiator with CRYPTO_SUITE=$(CRYPTO_SUITE)..."
@@ -295,9 +346,9 @@ edhoc_m1_initiator:
 	-@$(MAKE) -C $(M3_EDHOC_LIB) CC="$(CC)" AR="$(AR)" CFLAGS="$(CFLAGS)" CRYPTO_SUITE=$(CRYPTO_SUITE) DEBUG=$(DEBUG)
 	@echo "Building Method 1 initiator (Suite $(CRYPTO_SUITE))..."
 	@$(MAKE) all TARGET=edhoc_m1_initiator EDHOC_LIB_DIR=$(M3_EDHOC_LIB) \
-		C_SOURCES="src/edhoc_initiator_m1.c $(M3_COMMON_SRC) $(M3_CRYPTO_SRC)" \
+		C_SOURCES="src/edhoc_initiator_m1.c $(M3_COMMON_SRC) $(M_ED25519_SRC) $(M3_CRYPTO_SRC)" \
 		ASM_SOURCES="src/crt0.S" \
-		INCLUDES="$(INCLUDES) $(M3_INCLUDES)"
+		INCLUDES="$(M3_INCLUDES)" EDHOC_MODE=original
 
 edhoc_m1_responder:
 	@echo "Building EDHOC Method 1 Responder with CRYPTO_SUITE=$(CRYPTO_SUITE)..."
@@ -305,9 +356,9 @@ edhoc_m1_responder:
 	-@$(MAKE) -C $(M3_EDHOC_LIB) CC="$(CC)" AR="$(AR)" CFLAGS="$(CFLAGS)" CRYPTO_SUITE=$(CRYPTO_SUITE) DEBUG=$(DEBUG)
 	@echo "Building Method 1 responder (Suite $(CRYPTO_SUITE))..."
 	@$(MAKE) all TARGET=edhoc_m1_responder EDHOC_LIB_DIR=$(M3_EDHOC_LIB) \
-		C_SOURCES="src/edhoc_responder_m1.c $(M3_COMMON_SRC) $(M3_CRYPTO_SRC)" \
+		C_SOURCES="src/edhoc_responder_m1.c $(M3_COMMON_SRC) $(M_ED25519_SRC) $(M3_CRYPTO_SRC)" \
 		ASM_SOURCES="src/crt0.S" \
-		INCLUDES="$(INCLUDES) $(M3_INCLUDES)"
+		INCLUDES="$(M3_INCLUDES)" EDHOC_MODE=original
 
 edhoc_m2_initiator:
 	@echo "Building EDHOC Method 2 Initiator with CRYPTO_SUITE=$(CRYPTO_SUITE)..."
@@ -315,9 +366,9 @@ edhoc_m2_initiator:
 	-@$(MAKE) -C $(M3_EDHOC_LIB) CC="$(CC)" AR="$(AR)" CFLAGS="$(CFLAGS)" CRYPTO_SUITE=$(CRYPTO_SUITE) DEBUG=$(DEBUG)
 	@echo "Building Method 2 initiator (Suite $(CRYPTO_SUITE))..."
 	@$(MAKE) all TARGET=edhoc_m2_initiator EDHOC_LIB_DIR=$(M3_EDHOC_LIB) \
-		C_SOURCES="src/edhoc_initiator_m2.c $(M3_COMMON_SRC) $(M3_CRYPTO_SRC)" \
+		C_SOURCES="src/edhoc_initiator_m2.c $(M3_COMMON_SRC) $(M_ED25519_SRC) $(M3_CRYPTO_SRC)" \
 		ASM_SOURCES="src/crt0.S" \
-		INCLUDES="$(INCLUDES) $(M3_INCLUDES)"
+		INCLUDES="$(M3_INCLUDES)" EDHOC_MODE=original
 
 edhoc_m2_responder:
 	@echo "Building EDHOC Method 2 Responder with CRYPTO_SUITE=$(CRYPTO_SUITE)..."
@@ -325,9 +376,9 @@ edhoc_m2_responder:
 	-@$(MAKE) -C $(M3_EDHOC_LIB) CC="$(CC)" AR="$(AR)" CFLAGS="$(CFLAGS)" CRYPTO_SUITE=$(CRYPTO_SUITE) DEBUG=$(DEBUG)
 	@echo "Building Method 2 responder (Suite $(CRYPTO_SUITE))..."
 	@$(MAKE) all TARGET=edhoc_m2_responder EDHOC_LIB_DIR=$(M3_EDHOC_LIB) \
-		C_SOURCES="src/edhoc_responder_m2.c $(M3_COMMON_SRC) $(M3_CRYPTO_SRC)" \
+		C_SOURCES="src/edhoc_responder_m2.c $(M3_COMMON_SRC) $(M_ED25519_SRC) $(M3_CRYPTO_SRC)" \
 		ASM_SOURCES="src/crt0.S" \
-		INCLUDES="$(INCLUDES) $(M3_INCLUDES)"
+		INCLUDES="$(M3_INCLUDES)" EDHOC_MODE=original
 
 edhoc_m3_initiator:
 	@echo "Building EDHOC Method 3 Initiator with CRYPTO_SUITE=$(CRYPTO_SUITE)..."
@@ -335,9 +386,9 @@ edhoc_m3_initiator:
 	-@$(MAKE) -C $(M3_EDHOC_LIB) CC="$(CC)" AR="$(AR)" CFLAGS="$(CFLAGS)" CRYPTO_SUITE=$(CRYPTO_SUITE) DEBUG=$(DEBUG)
 	@echo "Building Method 3 initiator (Suite $(CRYPTO_SUITE))..."
 	@$(MAKE) all TARGET=edhoc_m3_initiator EDHOC_LIB_DIR=$(M3_EDHOC_LIB) \
-		C_SOURCES="src/edhoc_initiator_m3.c $(M3_COMMON_SRC) $(M3_CRYPTO_SRC)" \
+		C_SOURCES="src/edhoc_initiator_m3.c src/ed25519_stubs.c $(M3_COMMON_SRC) $(M3_CRYPTO_SRC)" \
 		ASM_SOURCES="src/crt0.S" \
-		INCLUDES="$(INCLUDES) $(M3_INCLUDES)"
+		INCLUDES="$(M3_INCLUDES)" EDHOC_MODE=original
 
 edhoc_m3_responder:
 	@echo "Building EDHOC Method 3 Responder with CRYPTO_SUITE=$(CRYPTO_SUITE)..."
@@ -345,9 +396,213 @@ edhoc_m3_responder:
 	-@$(MAKE) -C $(M3_EDHOC_LIB) CC="$(CC)" AR="$(AR)" CFLAGS="$(CFLAGS)" CRYPTO_SUITE=$(CRYPTO_SUITE) DEBUG=$(DEBUG)
 	@echo "Building Method 3 responder (Suite $(CRYPTO_SUITE))..."
 	@$(MAKE) all TARGET=edhoc_m3_responder EDHOC_LIB_DIR=$(M3_EDHOC_LIB) \
-		C_SOURCES="src/edhoc_responder_m3.c $(M3_COMMON_SRC) $(M3_CRYPTO_SRC)" \
+		C_SOURCES="src/edhoc_responder_m3.c src/ed25519_stubs.c $(M3_COMMON_SRC) $(M3_CRYPTO_SRC)" \
 		ASM_SOURCES="src/crt0.S" \
-		INCLUDES="$(INCLUDES) $(M3_INCLUDES)"
+		INCLUDES="$(M3_INCLUDES)" EDHOC_MODE=original
+
+# ============================================================================
+# EDHOC compact25519 Targets (baseline library — replaces Monocypher with shim)
+#
+# The EDHOC library is still compiled with -DMONOCYPHER (same protocol logic).
+# The shim (compact25519_shim.c) provides Monocypher-named crypto functions
+# implemented via compact25519 / c25519, resolved at link time.
+#
+# These targets produce EDHOC-level timing data using the original library,
+# directly comparable to the original paper's ARM Cortex-M results.
+#
+# Usage: make edhoc_m0_initiator_compact CRYPTO_SUITE=0
+# ============================================================================
+
+# Common sources WITHOUT Monocypher (shim replaces it)
+M3_COMMON_SRC_NOMONO = src/kprintf.c src/libc_stubs.c src/csprng_stub.c
+M3_COMMON_SRC_NOMONO += $(M3_EDHOC_LIB)/externals/zcbor/src/zcbor_common.c
+M3_COMMON_SRC_NOMONO += $(M3_EDHOC_LIB)/externals/zcbor/src/zcbor_encode.c
+M3_COMMON_SRC_NOMONO += $(M3_EDHOC_LIB)/externals/zcbor/src/zcbor_decode.c
+
+# Shim + all compact25519 / c25519 sources (Methods 0-2: need Ed25519)
+COMPACT25519_SHIM_SRC  = src/compact25519_shim.c
+COMPACT25519_SHIM_SRC += $(COMPACT25519_DIR)/compact_x25519.c
+COMPACT25519_SHIM_SRC += $(COMPACT25519_DIR)/compact_ed25519.c
+COMPACT25519_SHIM_SRC += $(COMPACT25519_DIR)/compact_wipe.c
+COMPACT25519_SHIM_SRC += $(COMPACT25519_DIR)/c25519/c25519.c
+COMPACT25519_SHIM_SRC += $(COMPACT25519_DIR)/c25519/f25519.c
+COMPACT25519_SHIM_SRC += $(COMPACT25519_DIR)/c25519/fprime.c
+COMPACT25519_SHIM_SRC += $(COMPACT25519_DIR)/c25519/ed25519.c
+COMPACT25519_SHIM_SRC += $(COMPACT25519_DIR)/c25519/edsign.c
+COMPACT25519_SHIM_SRC += $(COMPACT25519_DIR)/c25519/_sha512.c
+
+# X25519-only shim + sources (Method 3: no Ed25519, no SHA-512)
+# Use with ed25519_stubs.c to satisfy linker without pulling in Ed25519 code.
+COMPACT25519_X25519_ONLY_SRC  = src/compact25519_shim_x25519_only.c
+COMPACT25519_X25519_ONLY_SRC += $(COMPACT25519_DIR)/compact_x25519.c
+COMPACT25519_X25519_ONLY_SRC += $(COMPACT25519_DIR)/compact_wipe.c
+COMPACT25519_X25519_ONLY_SRC += $(COMPACT25519_DIR)/c25519/c25519.c
+COMPACT25519_X25519_ONLY_SRC += $(COMPACT25519_DIR)/c25519/f25519.c
+
+# Includes: same as M3_INCLUDES plus compact25519 headers
+M3_COMPACT_INCLUDES = $(M3_INCLUDES) -I$(COMPACT25519_DIR)
+
+edhoc_m0_initiator_compact:
+	@echo "Building EDHOC Method 0 Initiator (compact25519 baseline) CRYPTO_SUITE=$(CRYPTO_SUITE)..."
+	-@$(MAKE) -C $(M3_EDHOC_LIB) clean
+	@$(MAKE) -C $(M3_EDHOC_LIB) CC="$(CC)" AR="$(AR)" CFLAGS="$(CFLAGS)" CRYPTO_SUITE=$(CRYPTO_SUITE) DEBUG=$(DEBUG)
+	@$(MAKE) all TARGET=edhoc_m0_initiator_compact EDHOC_LIB_DIR=$(M3_EDHOC_LIB) \
+		C_SOURCES="src/edhoc_initiator_m0.c $(M3_COMMON_SRC_NOMONO) $(COMPACT25519_SHIM_SRC) $(M3_CRYPTO_SRC)" \
+		ASM_SOURCES="src/crt0.S" \
+		INCLUDES="$(M3_COMPACT_INCLUDES)" EDHOC_MODE=original
+
+edhoc_m0_responder_compact:
+	@echo "Building EDHOC Method 0 Responder (compact25519 baseline) CRYPTO_SUITE=$(CRYPTO_SUITE)..."
+	-@$(MAKE) -C $(M3_EDHOC_LIB) clean
+	@$(MAKE) -C $(M3_EDHOC_LIB) CC="$(CC)" AR="$(AR)" CFLAGS="$(CFLAGS)" CRYPTO_SUITE=$(CRYPTO_SUITE) DEBUG=$(DEBUG)
+	@$(MAKE) all TARGET=edhoc_m0_responder_compact EDHOC_LIB_DIR=$(M3_EDHOC_LIB) \
+		C_SOURCES="src/edhoc_responder_m0.c $(M3_COMMON_SRC_NOMONO) $(COMPACT25519_SHIM_SRC) $(M3_CRYPTO_SRC)" \
+		ASM_SOURCES="src/crt0.S" \
+		INCLUDES="$(M3_COMPACT_INCLUDES)" EDHOC_MODE=original
+
+edhoc_m1_initiator_compact:
+	@echo "Building EDHOC Method 1 Initiator (compact25519 baseline) CRYPTO_SUITE=$(CRYPTO_SUITE)..."
+	-@$(MAKE) -C $(M3_EDHOC_LIB) clean
+	@$(MAKE) -C $(M3_EDHOC_LIB) CC="$(CC)" AR="$(AR)" CFLAGS="$(CFLAGS)" CRYPTO_SUITE=$(CRYPTO_SUITE) DEBUG=$(DEBUG)
+	@$(MAKE) all TARGET=edhoc_m1_initiator_compact EDHOC_LIB_DIR=$(M3_EDHOC_LIB) \
+		C_SOURCES="src/edhoc_initiator_m1.c $(M3_COMMON_SRC_NOMONO) $(COMPACT25519_SHIM_SRC) $(M3_CRYPTO_SRC)" \
+		ASM_SOURCES="src/crt0.S" \
+		INCLUDES="$(M3_COMPACT_INCLUDES)" EDHOC_MODE=original
+
+edhoc_m1_responder_compact:
+	@echo "Building EDHOC Method 1 Responder (compact25519 baseline) CRYPTO_SUITE=$(CRYPTO_SUITE)..."
+	-@$(MAKE) -C $(M3_EDHOC_LIB) clean
+	@$(MAKE) -C $(M3_EDHOC_LIB) CC="$(CC)" AR="$(AR)" CFLAGS="$(CFLAGS)" CRYPTO_SUITE=$(CRYPTO_SUITE) DEBUG=$(DEBUG)
+	@$(MAKE) all TARGET=edhoc_m1_responder_compact EDHOC_LIB_DIR=$(M3_EDHOC_LIB) \
+		C_SOURCES="src/edhoc_responder_m1.c $(M3_COMMON_SRC_NOMONO) $(COMPACT25519_SHIM_SRC) $(M3_CRYPTO_SRC)" \
+		ASM_SOURCES="src/crt0.S" \
+		INCLUDES="$(M3_COMPACT_INCLUDES)" EDHOC_MODE=original
+
+edhoc_m2_initiator_compact:
+	@echo "Building EDHOC Method 2 Initiator (compact25519 baseline) CRYPTO_SUITE=$(CRYPTO_SUITE)..."
+	-@$(MAKE) -C $(M3_EDHOC_LIB) clean
+	@$(MAKE) -C $(M3_EDHOC_LIB) CC="$(CC)" AR="$(AR)" CFLAGS="$(CFLAGS)" CRYPTO_SUITE=$(CRYPTO_SUITE) DEBUG=$(DEBUG)
+	@$(MAKE) all TARGET=edhoc_m2_initiator_compact EDHOC_LIB_DIR=$(M3_EDHOC_LIB) \
+		C_SOURCES="src/edhoc_initiator_m2.c $(M3_COMMON_SRC_NOMONO) $(COMPACT25519_SHIM_SRC) $(M3_CRYPTO_SRC)" \
+		ASM_SOURCES="src/crt0.S" \
+		INCLUDES="$(M3_COMPACT_INCLUDES)" EDHOC_MODE=original
+
+edhoc_m2_responder_compact:
+	@echo "Building EDHOC Method 2 Responder (compact25519 baseline) CRYPTO_SUITE=$(CRYPTO_SUITE)..."
+	-@$(MAKE) -C $(M3_EDHOC_LIB) clean
+	@$(MAKE) -C $(M3_EDHOC_LIB) CC="$(CC)" AR="$(AR)" CFLAGS="$(CFLAGS)" CRYPTO_SUITE=$(CRYPTO_SUITE) DEBUG=$(DEBUG)
+	@$(MAKE) all TARGET=edhoc_m2_responder_compact EDHOC_LIB_DIR=$(M3_EDHOC_LIB) \
+		C_SOURCES="src/edhoc_responder_m2.c $(M3_COMMON_SRC_NOMONO) $(COMPACT25519_SHIM_SRC) $(M3_CRYPTO_SRC)" \
+		ASM_SOURCES="src/crt0.S" \
+		INCLUDES="$(M3_COMPACT_INCLUDES)" EDHOC_MODE=original
+
+# M3 compact: X25519-only shim + ed25519_stubs.c
+# Ed25519 and SHA-512 sources are excluded entirely; stubs resolve linker
+# references from the EDHOC library without pulling in any curve code.
+edhoc_m3_initiator_compact:
+	@echo "Building EDHOC Method 3 Initiator (compact25519 baseline) CRYPTO_SUITE=$(CRYPTO_SUITE)..."
+	-@$(MAKE) -C $(M3_EDHOC_LIB) clean
+	@$(MAKE) -C $(M3_EDHOC_LIB) CC="$(CC)" AR="$(AR)" CFLAGS="$(CFLAGS)" CRYPTO_SUITE=$(CRYPTO_SUITE) DEBUG=$(DEBUG)
+	@$(MAKE) all TARGET=edhoc_m3_initiator_compact EDHOC_LIB_DIR=$(M3_EDHOC_LIB) \
+		C_SOURCES="src/edhoc_initiator_m3.c src/ed25519_stubs.c $(M3_COMMON_SRC_NOMONO) $(COMPACT25519_X25519_ONLY_SRC) $(M3_CRYPTO_SRC)" \
+		ASM_SOURCES="src/crt0.S" \
+		INCLUDES="$(M3_COMPACT_INCLUDES)" EDHOC_MODE=original
+
+edhoc_m3_responder_compact:
+	@echo "Building EDHOC Method 3 Responder (compact25519 baseline) CRYPTO_SUITE=$(CRYPTO_SUITE)..."
+	-@$(MAKE) -C $(M3_EDHOC_LIB) clean
+	@$(MAKE) -C $(M3_EDHOC_LIB) CC="$(CC)" AR="$(AR)" CFLAGS="$(CFLAGS)" CRYPTO_SUITE=$(CRYPTO_SUITE) DEBUG=$(DEBUG)
+	@$(MAKE) all TARGET=edhoc_m3_responder_compact EDHOC_LIB_DIR=$(M3_EDHOC_LIB) \
+		C_SOURCES="src/edhoc_responder_m3.c src/ed25519_stubs.c $(M3_COMMON_SRC_NOMONO) $(COMPACT25519_X25519_ONLY_SRC) $(M3_CRYPTO_SRC)" \
+		ASM_SOURCES="src/crt0.S" \
+		INCLUDES="$(M3_COMPACT_INCLUDES)" EDHOC_MODE=original
+
+# ============================================================================
+# Crypto Micro-Benchmark
+# Measures cycle costs of individual X25519 and Ed25519 primitives.
+# Does NOT link the EDHOC library or zcbor — Monocypher only.
+# Usage: make crypto_bench CRYPTO_SUITE=0
+# ============================================================================
+BENCH_MONO_SRC = $(M3_EDHOC_LIB)/externals/Monocypher/src/monocypher.c
+BENCH_MONO_SRC += $(M3_EDHOC_LIB)/externals/Monocypher/src/optional/monocypher-ed25519.c
+BENCH_INCLUDES = -I. -Iinclude -I$(M3_EDHOC_LIB)/externals/Monocypher/src
+
+crypto_bench:
+	@echo "Building crypto micro-benchmark (Monocypher)..."
+	@$(MAKE) all TARGET=crypto_bench \
+		C_SOURCES="src/crypto_bench.c src/kprintf.c src/libc_stubs.c $(BENCH_MONO_SRC)" \
+		ASM_SOURCES="src/crt0.S" \
+		INCLUDES="$(BENCH_INCLUDES)" \
+		LIBS="-lgcc"
+
+# ============================================================================
+# Crypto Micro-Benchmark: compact25519 (original baseline library)
+# Mirrors crypto_bench but uses compact25519 / c25519 (Daniel Beer).
+# No CRYPTO_SUITE needed — compact25519 has no suite dependency.
+# Usage: make crypto_bench_compact
+# ============================================================================
+COMPACT25519_DIR = $(M3_EDHOC_LIB)/externals/compact25519/src
+BENCH_COMPACT_SRC  = $(COMPACT25519_DIR)/compact_x25519.c
+BENCH_COMPACT_SRC += $(COMPACT25519_DIR)/compact_ed25519.c
+BENCH_COMPACT_SRC += $(COMPACT25519_DIR)/compact_wipe.c
+BENCH_COMPACT_SRC += $(COMPACT25519_DIR)/c25519/c25519.c
+BENCH_COMPACT_SRC += $(COMPACT25519_DIR)/c25519/f25519.c
+BENCH_COMPACT_SRC += $(COMPACT25519_DIR)/c25519/fprime.c
+BENCH_COMPACT_SRC += $(COMPACT25519_DIR)/c25519/ed25519.c
+BENCH_COMPACT_SRC += $(COMPACT25519_DIR)/c25519/edsign.c
+BENCH_COMPACT_SRC += $(COMPACT25519_DIR)/c25519/_sha512.c
+BENCH_COMPACT_INCLUDES = -I. -Iinclude -I$(COMPACT25519_DIR)
+
+crypto_bench_compact:
+	@echo "Building crypto micro-benchmark (compact25519 baseline)..."
+	@$(MAKE) all TARGET=crypto_bench_compact \
+		C_SOURCES="src/crypto_bench_compact.c src/kprintf.c src/libc_stubs.c $(BENCH_COMPACT_SRC)" \
+		ASM_SOURCES="src/crt0.S" \
+		INCLUDES="$(BENCH_COMPACT_INCLUDES)" \
+		LIBS="-lgcc"
+
+# ============================================================================
+# OSCORE Standalone Benchmark
+# Measures oscore_context_init(), coap2oscore(), oscore2coap() in isolation.
+# Uses RFC 8613 Appendix C.1 test vectors — no EDHOC dependency.
+# ALWAYS built with Suite 0 (AES-CCM-16-64-128 + HMAC-SHA256): RFC 8613
+# mandatory cipher suite. CRYPTO_SUITE variable is intentionally ignored here.
+#
+# Usage: make oscore_benchmark
+#        make oscore_benchmark BENCHMARK_CPU_HZ=65000000UL   (65 MHz Arty 35T)
+# ============================================================================
+
+# OSCORE CFLAGS: Suite 0 forced, no Monocypher (not needed for OSCORE)
+OSCORE_CFLAGS  = $(ARCH_FLAGS) -Os -flto -g0 -ffunction-sections -fdata-sections -Wunused-function
+OSCORE_CFLAGS += -fno-unwind-tables -fno-asynchronous-unwind-tables
+OSCORE_CFLAGS += -nostartfiles -nostdlib -nodefaultlibs -fno-builtin -fno-tree-loop-distribute-patterns
+OSCORE_CFLAGS += -Wall -Wextra -DMESSAGE_4 -DZCBOR_CANONICAL
+OSCORE_CFLAGS += -DTINYCRYPT -DEDHOC_CRYPTO_SUITE=0
+ifdef BENCHMARK_CPU_HZ
+OSCORE_CFLAGS += -DBENCHMARK_CPU_HZ=$(BENCHMARK_CPU_HZ)
+endif
+
+# Application + platform sources (no Monocypher — OSCORE uses TinyCrypt only)
+OSCORE_BENCH_SRC  = src/oscore_benchmark.c src/kprintf.c src/libc_stubs.c src/csprng_stub.c
+OSCORE_BENCH_SRC += $(M3_EDHOC_LIB)/externals/zcbor/src/zcbor_common.c
+OSCORE_BENCH_SRC += $(M3_EDHOC_LIB)/externals/zcbor/src/zcbor_encode.c
+OSCORE_BENCH_SRC += $(M3_EDHOC_LIB)/externals/zcbor/src/zcbor_decode.c
+OSCORE_BENCH_SRC += $(M3_TINYCRYPT_DIR)/aes_encrypt.c
+OSCORE_BENCH_SRC += $(M3_TINYCRYPT_DIR)/ccm_mode.c
+OSCORE_BENCH_SRC += $(M3_TINYCRYPT_DIR)/tc_sha256.c
+OSCORE_BENCH_SRC += $(M3_TINYCRYPT_DIR)/hmac.c
+OSCORE_BENCH_SRC += $(M3_TINYCRYPT_DIR)/utils.c
+
+oscore_benchmark:
+	@echo "Building uoscore-uedhoc library for OSCORE benchmark (Suite 0)..."
+	-@$(MAKE) -C $(M3_EDHOC_LIB) clean
+	@$(MAKE) -C $(M3_EDHOC_LIB) CC="$(CC)" AR="$(AR)" CFLAGS="$(OSCORE_CFLAGS)" CRYPTO_SUITE=0 DEBUG=$(DEBUG)
+	@echo "Building OSCORE benchmark (AES-CCM-16-64-128 + HMAC-SHA256)..."
+	@$(MAKE) all TARGET=oscore_benchmark EDHOC_LIB_DIR=$(M3_EDHOC_LIB) \
+		CFLAGS="$(OSCORE_CFLAGS)" \
+		C_SOURCES="$(OSCORE_BENCH_SRC)" \
+		ASM_SOURCES="src/crt0.S" \
+		INCLUDES="$(M3_INCLUDES)" EDHOC_MODE=original
 
 debug_make:
 	@echo $(C_SOURCES)
@@ -360,4 +615,12 @@ clean:
 	-@$(MAKE) -C $(M3_EDHOC_LIB) clean
 	@echo "Clean complete!"
 
-.PHONY: all clean edhoc_initiator edhoc_responder x25519_test edhoc_hw_initiator edhoc_hw_responder edhoc_m0_initiator edhoc_m0_responder edhoc_m1_initiator edhoc_m1_responder edhoc_m2_initiator edhoc_m2_responder edhoc_m3_initiator edhoc_m3_responder
+.PHONY: all clean edhoc_initiator edhoc_responder x25519_test edhoc_hw_initiator edhoc_hw_responder \
+        edhoc_m3_initiator_hw edhoc_m3_responder_hw oscore_benchmark_hw \
+        edhoc_m0_initiator edhoc_m0_responder edhoc_m1_initiator edhoc_m1_responder \
+        edhoc_m2_initiator edhoc_m2_responder edhoc_m3_initiator edhoc_m3_responder \
+        edhoc_m0_initiator_compact edhoc_m0_responder_compact \
+        edhoc_m1_initiator_compact edhoc_m1_responder_compact \
+        edhoc_m2_initiator_compact edhoc_m2_responder_compact \
+        edhoc_m3_initiator_compact edhoc_m3_responder_compact \
+        crypto_bench crypto_bench_compact oscore_benchmark

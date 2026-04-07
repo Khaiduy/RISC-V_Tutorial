@@ -12,26 +12,33 @@ class RocketConfig extends Config(
   new chipyard.config.AbstractConfig)
 
 class SmallRocketConfig extends Config(
-  new chipyard.iobinders.WithDontTouchIOBinders(false) ++         // TODO FIX: Don't dontTouch the ports
-    //  new freechips.rocketchip.subsystem.WithIncoherentBusTopology ++
-    // new chipyard.crypto.ascon.WithASCON(address = BigInt(0x64006000L)) ++ // add ASCON peripheral - temporarily disabled
-    new chipyard.crypto.x25519.WithX25519(address = BigInt(0x64004000L)) ++ // add X25519 peripherals
-    new testchipip.WithMbusScratchpad(base = 0x80000000L, size=BigInt(64 << 10)) ++   // SRAM on-chip 64kB (changed from 16kB)
-    new freechips.rocketchip.subsystem.WithNoMemPort ++
+    new testchipip.WithMbusScratchpad(base = 0x80000000L, size=BigInt(64 << 10)) ++   // SRAM on-chip 64kB
     new freechips.rocketchip.subsystem.WithNSmallCores(1) ++         // single rocket-core
     new freechips.rocketchip.subsystem.WithoutTLMonitors ++
     new chipyard.config.AbstractConfig)
 
-// RV32 version of SmallRocketConfig - no X25519 hardware accelerator
+// RV32 version of SmallRocketConfig with EDHOC hardware accelerator
+// Use MbusScratchpad to avoid L2 cache configuration issues with RV32
 class SmallRocket32Config extends Config(
   new freechips.rocketchip.subsystem.WithRV32 ++                    // 32-bit RISC-V
     new chipyard.iobinders.WithDontTouchIOBinders(false) ++
+    // new chipyard.crypto.edhoc.WithEDHOC(address = BigInt(0x64004000L)) ++ // add EDHOC+OSCORE accelerator
     new testchipip.WithMbusScratchpad(base = 0x80000000L, size=BigInt(64 << 10)) ++   // SRAM on-chip 64kB
-    new freechips.rocketchip.subsystem.WithNoMemPort ++
-    new freechips.rocketchip.subsystem.WithNSmallCores(1) ++         // single small rocket-core
+    new freechips.rocketchip.subsystem.WithNoMemPort ++             // remove off-chip mem port
+    new freechips.rocketchip.subsystem.WithNSmallCores(1) ++        // single small rocket-core
     new freechips.rocketchip.subsystem.WithoutTLMonitors ++
     new chipyard.config.AbstractConfig)
 
+
+// RV32 pure-software EDHOC config (no hardware accelerator), 64 kB on-chip scratchpad
+class SmallRocket32M3Config extends Config(
+  new freechips.rocketchip.subsystem.WithRV32 ++                    // 32-bit RISC-V
+    new chipyard.iobinders.WithDontTouchIOBinders(false) ++
+    new testchipip.WithMbusScratchpad(base = 0x80000000L, size=BigInt(64 << 10)) ++   // SRAM on-chip 64kB
+    new freechips.rocketchip.subsystem.WithNoMemPort ++             // remove off-chip mem port
+    new freechips.rocketchip.subsystem.WithNSmallCores(1) ++        // single small rocket-core
+    new freechips.rocketchip.subsystem.WithoutTLMonitors ++
+    new chipyard.config.AbstractConfig)
 
 class TinyRocketConfig extends Config(
   new chipyard.WithGCDAccel ++

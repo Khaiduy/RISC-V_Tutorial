@@ -1,0 +1,172 @@
+// Quick Reference: TRNG Peripheral Integration
+
+/****************************************************************************
+ * MEMORY MAP
+ ****************************************************************************/
+#define TRNG_BASE      0x10030000UL
+
+// Registers (offset from TRNG_BASE)
+#define CTRL_REG       0x00  // [W]  bit[0]=start
+#define STATUS_REG     0x04  // [RW] bit[0]=done(sticky), bit[1]=busy
+#define RNS0_REG       0x10  // [R]  bits[31:0]
+#define RNS1_REG       0x14  // [R]  bits[63:32]
+#define RNS2_REG       0x18  // [R]  bits[95:64]
+#define RNS3_REG       0x1C  // [R]  bits[127:96]
+#define RNS4_REG       0x20  // [R]  bits[159:128]
+#define RNS5_REG       0x24  // [R]  bits[191:160]
+#define RNS6_REG       0x28  // [R]  bits[223:192]
+#define RNS7_REG       0x2C  // [R]  bits[255:224]
+
+/****************************************************************************
+ * C DRIVER USAGE
+ ****************************************************************************/
+
+#include "trng.h"
+
+// Basic usage pattern:
+uint32_t random[8];
+
+trng_clear_done();     // Clear sticky flag
+trng_start();          // Start generation
+trng_wait_done();      // Wait for completion (blocking)
+trng_read_256(random); // Read 256-bit result
+
+// Non-blocking pattern:
+trng_clear_done();
+trng_start();
+while (!trng_is_done()) {
+    // Do other work...
+}
+trng_read_256(random);
+
+// Check busy status:
+if (!trng_is_busy()) {
+    trng_start();
+}
+
+/****************************************************************************
+ * SCALA CONFIGURATION
+ ****************************************************************************/
+
+// In Configs.scala:
+class MyConfig extends Config(
+  new chipyard.crypto.trng.WithTRNG(0x10030000L) ++  // Add TRNG at address
+  // ... other configs
+)
+
+// In DigitalTop.scala:
+class DigitalTop extends ChipyardSystem
+  with chipyard.crypto.trng.CanHavePeripheryTRNG  // Add trait
+  // ... other traits
+
+class DigitalTopModule extends ChipyardSystemModule
+  with chipyard.crypto.trng.CanHavePeripheryTRNGModuleImp  // Add module trait
+  // ... other traits
+
+/****************************************************************************
+ * BUILD COMMANDS
+ ****************************************************************************/
+
+# Generate Verilog with TRNG:
+cd fpga
+make SUB_PROJECT=arty100t verilog
+
+# Build firmware:
+cd fpga/sw/trng_test
+make
+
+# Generate bitstream:
+cd fpga
+make SUB_PROJECT=arty100t bitstream
+
+# Program FPGA:
+make SUB_PROJECT=arty100t program
+
+/****************************************************************************
+ * TIMING CHARACTERISTICS
+ ****************************************************************************/
+
+Latency per 256-bit generation: 8192 cycles
+  = 2048 cycles warmup × 4 words
+
+At 50 MHz: ~164 µs
+Throughput: ~1.56 MB/s (6.25 Mbits/s)
+
+/****************************************************************************
+ * HARDWARE RESOURCES
+ ****************************************************************************/
+
+Verilog files required:
+  - TRNG.v (main FSM)
+  - TopTRNG.v (wrapper)
+  - LFSR_64.v (conditioning)
+  - ringOsc.v (entropy source)
+  - FF_D.v (flip-flops)
+
+Estimated FPGA usage:
+  - LUTs: ~600
+  - Registers: ~350
+  - Block RAM: 0
+
+/****************************************************************************
+ * IMPORTANT NOTES
+ ****************************************************************************/
+
+1. STICKY DONE BIT:
+   - Hardware oDone is only 1 cycle
+   - Scala wrapper makes it sticky
+   - Software MUST clear it by writing 1
+
+2. AUTO-CLEAR START:
+   - Start bit automatically clears after 1 cycle
+   - No need for software to clear it
+
+3. REGISTER ACCESS:
+   - All registers are 32-bit aligned
+   - Use volatile pointers in C
+   - REG32(addr) macro provided
+
+4. ENDIANNESS:
+   - RNS0 = LSB [31:0]
+   - RNS7 = MSB [255:224]
+
+/****************************************************************************
+ * TROUBLESHOOTING
+ ****************************************************************************/
+
+Issue: TRNG never completes
+Fix: Check clock is running, verify reset released
+
+Issue: Done flag already set
+Fix: Call trng_clear_done() before trng_start()
+
+Issue: All random data is zero
+Fix: Verify Verilog resources loaded, check ring oscillator enabled
+
+Issue: Compilation errors in Scala
+Fix: Import chipyard.crypto.trng._ in Configs.scala
+
+/****************************************************************************
+ * FILE LOCATIONS
+ ****************************************************************************/
+
+Scala wrapper:
+  generators/chipyard/src/main/scala/crypto/trng/TRNG.scala
+
+Verilog source:
+  fpga/DRBG/trng_vsrc/TRNG.v
+  fpga/DRBG/trng_vsrc/TopTRNG.v
+  fpga/DRBG/trng_vsrc/LFSR_64.v
+  fpga/DRBG/trng_vsrc/ringOsc.v
+  fpga/DRBG/trng_vsrc/FF_D.v
+
+Firmware test:
+  fpga/sw/trng_test/
+
+Configuration:
+  fpga/src/main/scala/arty100t/Configs.scala
+  generators/chipyard/src/main/scala/DigitalTop.scala
+
+Documentation:
+  fpga/TRNG_INTEGRATION.md
+  fpga/sw/trng_test/README.md

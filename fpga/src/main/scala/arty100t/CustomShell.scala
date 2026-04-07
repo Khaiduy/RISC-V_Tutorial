@@ -17,6 +17,6 @@ abstract class Arty100TShellCustomOverlays()(implicit p: Parameters) extends Ser
   // Peripheries
   val jtag  = Overlay(JTAGDebugOverlayKey, new JTAGDebugArtyShellPlacer(this, JTAGDebugShellInput()))
   val uart  = Seq.tabulate(2)(i => Overlay(UARTOverlayKey, new UARTArtyShellPlacer(this, UARTShellInput(index = i))(valName = ValName(s"uart_$i"))))
-  val sdio  = Overlay(SPIOverlayKey, new SDIOArtyShellPlacer(this, SPIShellInput()))
-  val gpio  = Seq.tabulate(24)(i => {Overlay(GPIOOverlayKey, new GPIOArtyShellPlacer(this, GPIOShellInput()))})
+  val sdio  = Seq.tabulate(3)(i => Overlay(SPIOverlayKey, new SDIOArtyShellPlacer(this, SPIShellInput())(valName = ValName(s"sdio_$i"))))
+  val gpio  = Overlay(GPIOOverlayKey, new GPIOArtyShellPlacer(this, GPIOShellInput()))
 }

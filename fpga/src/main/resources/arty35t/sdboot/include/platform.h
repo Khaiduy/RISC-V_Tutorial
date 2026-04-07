@@ -37,9 +37,14 @@
 #define ERROR_MEM_SIZE _AC(0x1000,UL)
 
 #define MASKROM_MEM_ADDR _AC(0x10000,UL)
-#define MASKROM_MEM_SIZE _AC(0x10000,UL)
+#define MASKROM_MEM_SIZE _AC(0x2000,UL)
 #define MEMORY_MEM_ADDR _AC(0x80000000,UL)
-#define MEMORY_MEM_SIZE _AC(0x10000,UL)
+/* SRAM_SIZE can be overridden at compile time (e.g. -DSRAM_SIZE=0x2000 for 8 kB).
+   Default is 64 kB (0x10000). */
+#ifndef SRAM_SIZE
+  #define SRAM_SIZE 0x10000
+#endif
+#define MEMORY_MEM_SIZE (SRAM_SIZE)
 #define PLIC_CTRL_ADDR _AC(0xc000000,UL)
 #define PLIC_CTRL_SIZE _AC(0x4000000,UL)
 

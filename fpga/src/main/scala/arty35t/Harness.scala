@@ -46,8 +46,10 @@ class Arty35TwoDDRHarness(override implicit val p: Parameters) extends Arty35TSh
   }
 
   /*** SDIO ***/
-  val io_spi_bb = BundleBridgeSource(() => (new SPIPortIO(dp(PeripherySPIKey).head)))
-  dp(SPIOverlayKey).head.place(SPIDesignInput(dp(PeripherySPIKey).head, io_spi_bb))
+  val io_spi_bb = dp(PeripherySPIKey).map(p => BundleBridgeSource(() => (new SPIPortIO(p))))
+  (dp(SPIOverlayKey) zip dp(PeripherySPIKey)).zipWithIndex.map { case ((placer, params), i) =>
+    placer.place(SPIDesignInput(params, io_spi_bb(i)))
+  }
 
   // Module implementation
   override lazy val module = new Arty35TwoDDRHarnessImp(this)

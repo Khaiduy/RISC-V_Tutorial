@@ -4,9 +4,9 @@
  * Suite 0: X25519 + AES-CCM-16-64-128 (8-byte tag) + SHA-256
  * Suite 1: X25519 + AES-CCM-16-128-128 (16-byte tag) + SHA-256
  *
- * Authentication: Static DH keys (no signatures)
- *   - Initiator proves identity via ECDH(i, G_Y)
- *   - Responder proves identity via ECDH(r, G_X)
+ * Authentication:
+ *   - Initiator (SDHK): proves identity via static DH key (i_sk / g_i)
+ *   - Responder (SK):   proves identity via Ed25519 signature (r_sign_sk / r_sign_pk)
  */
 #include <string.h>
 #include <stdint.h>
@@ -35,6 +35,7 @@ static inline int uart1_getc(void) {
 }
 
 enum err tx_initiator(void *sock, struct byte_array *data) {
+    (void)sock;
 #ifdef DEBUG_PRINT
     kprintf("[I-TX] Sending %d bytes\r\n", data->len);
 #endif
@@ -51,6 +52,7 @@ enum err tx_initiator(void *sock, struct byte_array *data) {
 }
 
 enum err rx_initiator(void *sock, struct byte_array *data) {
+    (void)sock;
     int timeout = 1000000000, c;
 #ifdef DEBUG_PRINT
     kprintf("[I-RX] Waiting...\r\n");
@@ -99,14 +101,16 @@ enum err rx_initiator(void *sock, struct byte_array *data) {
     return ok;
 }
 
-enum err ead_process(void *params, struct byte_array *ead) { return ok; }
+enum err ead_process(void *params, struct byte_array *ead) { (void)params; (void)ead; return ok; }
 
 /*============================================================================
  * KEY MATERIAL
- * 
- * Method 3 requires:
- *   - Ephemeral keys (x_i, g_x) - generated fresh for each session
- *   - Static DH keys (i, g_i) - long-term authentication keys
+ *
+ * Method 2 (SDHK init, SK resp) requires:
+ *   - Ephemeral keys (x_i, g_x)    - generated fresh for each session
+ *   - Static DH keys (i_sk, g_i)   - initiator's long-term authentication keys
+ *   - Responder Ed25519 public key (r_sign_pk) - for verifying responder's signature
+ *     (r_sign_seed kept only to derive r_sign_pk; secret key not needed by initiator)
  *============================================================================*/
 
 // Initiator's EPHEMERAL private key (X) - generated per session
@@ -123,25 +127,16 @@ static const uint8_t i_sk[] = {
     0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01
 };
 
-
-// Ed25519 Authentication Keys
-static const uint8_t i_sign_seed[] = {
-    0x01,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
-    0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01
-};
-static uint8_t i_sign_sk[64];
-static uint8_t i_sign_pk[32];
-
+// Responder's Ed25519 seed - used only to derive r_sign_pk for peer verification
 static const uint8_t r_sign_seed[] = {
     0x02,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
     0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x02
 };
-static uint8_t r_sign_sk[64];
-static uint8_t r_sign_pk[32];
+static uint8_t r_sign_pk[32]; // Responder's Ed25519 public key (computed at startup)
 
 // Public keys (computed at runtime from private keys)
-static uint8_t g_x[32];  // Ephemeral public key = X25519(x_i, basepoint)
-static uint8_t g_i[32];  // Static DH public key = X25519(i_sk, basepoint)
+static uint8_t g_x[32]; // Ephemeral public key = X25519(x_i, basepoint)
+static uint8_t g_i[32]; // Static DH public key = X25519(i_sk, basepoint)
 
 // Connection identifier for initiator
 static const uint8_t c_i[] = {0x2d}; // C_I = -14
@@ -157,106 +152,92 @@ static const uint8_t suites[] = {0x00}; // Default to Suite 0
 
 /*============================================================================
  * CREDENTIALS
- * 
- * For Method 3, CRED_I contains the initiator's static DH public key.
- * Format: CCS (CWT Claims Set) containing the public key
- *   CRED_I = { 2: "initiator_id", 8: { 1: { 1: 4, 2: kid, -1: g_i } } }
- *   where: 1:4 = OKP key type, 2:kid = key id, -1:g_i = x-coordinate
  *
- * ID_CRED_I = { 4: kid } - compact reference to CRED_I
+ * Method 2 credential layout:
+ *   CRED_I: CCS containing initiator's static DH public key (crv=4, X25519)
+ *     {2: "InitM2", 8: {1: {1: 1, 2: kid_i, -1: 4, -2: g_i}}}
+ *   CRED_R: CCS containing responder's Ed25519 public key (crv=6, Ed25519)
+ *     {2: "RespM2", 8: {1: {1: 1, 2: kid_r, -1: 6, -2: r_sign_pk}}}
+ *
+ * ID_CRED_I = {4: kid_i}, ID_CRED_R = {4: kid_r}
  *============================================================================*/
 
-// ID_CRED_I = {4: 1} - key ID for initiator's static DH key (integer KID)
+// ID_CRED_I = {4: 1}
 static const uint8_t id_cred_i[] = {0xa1, 0x04, 0x01}; // {4: 1}
 
-// CRED_I: CCS containing initiator's static DH public key
-// Will be built dynamically since g_i is computed at runtime
-// Format: {2: "InitiatorM3", 8: {1: {1: 4, 2: h'01', -1: <g_i 32 bytes>}}}
-static uint8_t cred_i[60]; // Buffer for CRED_I
+// CRED_I: CCS containing initiator's static DH public key (built dynamically)
+static uint8_t cred_i[60];
 static uint32_t cred_i_len;
 
-// Responder's credentials (for verification)
-// ID_CRED_R = {4: 2} - key ID for responder's static DH key (integer KID)
+// ID_CRED_R = {4: 2}
 static const uint8_t id_cred_r[] = {0xa1, 0x04, 0x02}; // {4: 2}
 
-// Responder's STATIC DH public key (G_R) - computed from r_sk=0x02
-// This is X25519(r_sk, basepoint) - must match responder's computed g_r
-static const uint8_t g_r[] = {
-    0xad,0x8c,0x48,0xc2,0x67,0x65,0xae,0xa7,0xad,0xc5,0x36,0x28,0x96,0x05,0xc1,0xab,
-    0xea,0x95,0x05,0x00,0x93,0xdb,0xd2,0x18,0xc9,0x6a,0xbd,0x24,0x81,0xa0,0x35,0x65
-};
-
-// CRED_R: CCS containing responder's static DH public key (pre-built)
-static uint8_t cred_r[60]; // Buffer for CRED_R
+// CRED_R: CCS containing responder's Ed25519 public key (built dynamically)
+static uint8_t cred_r[60];
 static uint32_t cred_r_len;
 
 /*============================================================================
  * HELPER FUNCTIONS
  *============================================================================*/
 
-// Compute public key from private key using X25519
+// Compute X25519 public key from private key
 static void generate_public_key(const uint8_t *priv_key, uint8_t *pub_key) {
-    
-    
-    
     uint8_t e[32];
     memcpy(e, priv_key, 32);
-    
+
     // Clamp private key (X25519 standard)
     e[0] &= 0xf8;
     e[31] &= 0x7f;
     e[31] |= 0x40;
-    
-    
+
     crypto_x25519_public_key(pub_key, e);
     memset(e, 0, 32);
 }
 
-// Build CCS credential containing static DH public key
-// Format: {2: "name", 8: {1: {1: 1, 2: kid_bytes, -1: 4, -2: pk_bytes}}}
-// OKP/X25519 COSE_Key per RFC 9053 §7.2: kty=1(OKP), crv=-1:4(X25519), x=-2:pk
-static uint32_t build_ccs_credential(uint8_t *buf, const char *name, 
+// Build CCS credential containing a COSE_Key
+// Supports crv=4 (X25519, static DH) and crv=6 (Ed25519, signature)
+static uint32_t build_ccs_credential(uint8_t *buf, const char *name,
                                       const uint8_t *kid, uint32_t kid_len,
                                       const uint8_t *pk, uint32_t pk_len, uint8_t crv) {
     uint8_t *p = buf;
     uint32_t name_len = 0;
     while (name[name_len]) name_len++;  // Simple strlen
-    
+
     // Outer map: {2: ..., 8: ...}
     *p++ = 0xa2;  // map(2)
-    
+
     // Key 2: name (text string)
     *p++ = 0x02;
     *p++ = 0x60 + (uint8_t)name_len;  // text(name_len)
     for (uint32_t i = 0; i < name_len; i++) *p++ = name[i];
-    
+
     // Key 8: cnf claim
     *p++ = 0x08;
     *p++ = 0xa1;  // map(1)
-    
-    // cnf key 1: COSE_Key (OKP/X25519, RFC 9053 §7.2)
+
+    // cnf key 1: COSE_Key (OKP, RFC 9053 §7.2)
     *p++ = 0x01;
     *p++ = 0xa4;  // map(4): kty, kid, crv, x
-    
+
     // kty = 1 (OKP)  [RFC 9053 §7.1]
     *p++ = 0x01;
     *p++ = 0x01;
-    
+
     // kid = bytes  [label 2]
     *p++ = 0x02;
     *p++ = 0x40 + (uint8_t)kid_len;  // bytes(kid_len)
     for (uint32_t i = 0; i < kid_len; i++) *p++ = kid[i];
-    
-    // crv = 4 (X25519)  [label -1 = 0x20, RFC 9053 §7.2 Table 18]
+
+    // crv  [label -1 = 0x20]: 4=X25519, 6=Ed25519
     *p++ = 0x20;  // -1 in CBOR
-    *p++ = crv; // 4=X25519, 6=Ed25519
-    
-    // x = pk  [label -2 = 0x21, RFC 9053 §7.2 Table 19]
+    *p++ = crv;
+
+    // x = pk  [label -2 = 0x21]
     *p++ = 0x21;  // -2 in CBOR
     *p++ = 0x58;  // bytes with 1-byte length
     *p++ = (uint8_t)pk_len;
     for (uint32_t i = 0; i < pk_len; i++) *p++ = pk[i];
-    
+
     return (uint32_t)(p - buf);
 }
 
@@ -276,96 +257,102 @@ int main(void) {
     REG32_UART1(UART_REG_DIV) = 868;
     REG32_UART1(UART_REG_TXCTRL) = UART_TXEN;
     REG32_UART1(UART_REG_RXCTRL) = UART_RXEN;
-    
+
     uint64_t t_keygen_start = 0, t_keygen_end = 0;
-    uint64_t t_edhoc_start = 0, t_edhoc_end = 0;
 
 #ifdef DEBUG_PRINT
     kprintf("\r\n=================================\r\n");
-    kprintf("EDHOC Initiator - Method 3\r\n");
+    kprintf("EDHOC Initiator - Method 2\r\n");
     kprintf("Suite 0/1 (X25519 + AES-CCM)\r\n");
+    kprintf("SDHK init, SK resp\r\n");
     kprintf("=================================\r\n");
 #endif
+
+    // Pre-provisioning: compute responder's Ed25519 public key (not timed)
+    {
+        uint8_t tmp_sk[64], seed_tmp[32];
+        memcpy(seed_tmp, r_sign_seed, 32);
+        crypto_ed25519_key_pair(tmp_sk, r_sign_pk, seed_tmp);
+        memset(tmp_sk, 0, 64);
+    }
     
-    
-    // Static DH public key
-    crypto_x25519_public_key(g_i, i_sk);
-    
-    // Ed25519 keys
-    crypto_ed25519_key_pair(i_sign_sk, i_sign_pk, (uint8_t *)i_sign_seed);
-    crypto_ed25519_key_pair(r_sign_sk, r_sign_pk, (uint8_t *)r_sign_seed);
-   // Static DH public key
-    // Generate public keys from private keys
+    // Pre-provisioning (not timed): derive static DH public key from long-term private key.
+    // In production g_i is stored in NVM alongside i_sk.
+    generate_public_key(i_sk, g_i);
+
+    // Per-session ephemeral keygen (timed): X25519 base-point multiplication only
     t_keygen_start = read_cycles();
-    generate_public_key(x_i, g_x);    // Ephemeral public key
+    generate_public_key(x_i, g_x);
     t_keygen_end = read_cycles();
-    
+
     // Build credentials with the computed public keys
     static const uint8_t kid_i[] = {0x01};
     static const uint8_t kid_r[] = {0x02};
-    cred_i_len = build_ccs_credential(cred_i, "InitM3", kid_i, 1, g_i, 32, 4);
-    cred_r_len = build_ccs_credential(cred_r, "RespM3", kid_r, 1, g_r, 32, 6);
-    
+    // cred_i: initiator uses DH key (crv=4, X25519)
+    cred_i_len = build_ccs_credential(cred_i, "InitM2", kid_i, 1, g_i, 32, 4);
+    // cred_r: responder uses Ed25519 (crv=6)
+    cred_r_len = build_ccs_credential(cred_r, "RespM2", kid_r, 1, r_sign_pk, 32, 6);
+
 #ifdef DEBUG_PRINT
     kprintf("\r\n=== INITIATOR KEY MATERIAL ===\r\n");
-    
+
     kprintf("Ephemeral private (x): ");
     for (uint32_t j = 0; j < 32; j++) kprintf("%hx ", x_i[j]);
     kprintf("...\r\n");
-    
+
     kprintf("Ephemeral public (G_X): ");
     for (uint32_t j = 0; j < 32; j++) kprintf("%hx ", g_x[j]);
     kprintf("...\r\n");
-    
+
     kprintf("Static DH private (I): ");
     for (uint32_t j = 0; j < 32; j++) kprintf("%hx ", i_sk[j]);
     kprintf("...\r\n");
-    
+
     kprintf("Static DH public (G_I): ");
     for (uint32_t j = 0; j < 32; j++) kprintf("%hx ", g_i[j]);
     kprintf("...\r\n");
-    
-    kprintf("Responder static (G_R): ");
-    for (uint32_t j = 0; j < 32; j++) kprintf("%hx ", g_r[j]);
+
+    kprintf("Responder Ed25519 pk (r_sign_pk): ");
+    for (uint32_t j = 0; j < 32; j++) kprintf("%hx ", r_sign_pk[j]);
     kprintf("...\r\n");
-    
-    kprintf("\r\nMethod 2: authentication (both parties)\r\n");
+
+    kprintf("\r\nMethod 2: initiator=SDHK, responder=SK\r\n");
 #endif
 
     /*========================================================================
-     * EDHOC INITIATOR CONTEXT SETUP - Method 3
+     * EDHOC INITIATOR CONTEXT SETUP - Method 2
      *========================================================================*/
     struct edhoc_initiator_context ctx_i = {0};
-    
-    // Method 2: Both use Static DH
+
+    // Method 2: Initiator uses Static DH, Responder uses Ed25519
     ctx_i.method = INITIATOR_SDHK_RESPONDER_SK;
-    
+
     // Connection identifier
     ctx_i.c_i.ptr = (uint8_t *)c_i;
     ctx_i.c_i.len = sizeof(c_i);
-    
+
     // Supported cipher suites
     ctx_i.suites_i.ptr = (uint8_t *)suites;
     ctx_i.suites_i.len = sizeof(suites);
-    
+
     // Ephemeral keys (fresh per session)
     ctx_i.x.ptr = (uint8_t *)x_i;
     ctx_i.x.len = sizeof(x_i);
     ctx_i.g_x.ptr = g_x;
     ctx_i.g_x.len = sizeof(g_x);
-    
-    // Static DH keys (Method 3) - Initiator's long-term keys
+
+    // Static DH keys (Method 2 initiator is SDHK) - use i/g_i fields
     ctx_i.i.ptr = (uint8_t *)i_sk;
     ctx_i.i.len = sizeof(i_sk);
     ctx_i.g_i.ptr = g_i;
     ctx_i.g_i.len = sizeof(g_i);
-    
+
     // Initiator's credentials
     ctx_i.id_cred_i.ptr = (uint8_t *)id_cred_i;
     ctx_i.id_cred_i.len = sizeof(id_cred_i);
     ctx_i.cred_i.ptr = cred_i;
     ctx_i.cred_i.len = cred_i_len;
-    
+
     /*========================================================================
      * RESPONDER CREDENTIAL VERIFICATION
      *========================================================================*/
@@ -374,11 +361,11 @@ int main(void) {
     cred_r_entry.id_cred.len = sizeof(id_cred_r);
     cred_r_entry.cred.ptr = cred_r;
     cred_r_entry.cred.len = cred_r_len;
-    // For Method 3, the static DH public key goes in the 'g' field
-    cred_r_entry.g.ptr = r_sign_pk;
-    cred_r_entry.g.len = sizeof(g_r);
+    // Method 2 responder is SK: Ed25519 public key goes in 'pk' field
+    cred_r_entry.pk.ptr = r_sign_pk;
+    cred_r_entry.pk.len = 32;
     struct cred_array cred_r_array = {.len = 1, .ptr = &cred_r_entry};
-    
+
     /*========================================================================
      * RUN EDHOC
      *========================================================================*/
@@ -390,42 +377,33 @@ int main(void) {
     kprintf("\r\n=== EDHOC INITIATOR START ===\r\n");
 #endif
 
-    t_edhoc_start = read_cycles();
     enum err result = edhoc_initiator_run(&ctx_i, &cred_r_array, &err_msg, &prk_out,
                                           tx_initiator, rx_initiator, ead_process);
-    t_edhoc_end = read_cycles();
-    
+
     if (result != ok) {
         kprintf("EDHOC FAIL: %d\r\n", result);
         while (1);
     }
-    
+
     kprintf("EDHOC OK!\r\n");
-    
+
     /* Timing results */
     kprintf("\r\n--- Timing (cycles) ---\r\n");
-    kprintf("Key generation:  %lu\r\n", (unsigned long)(t_keygen_end - t_keygen_start));
-    kprintf("EDHOC protocol:  %lu\r\n", (unsigned long)(t_edhoc_end - t_edhoc_start));
-    kprintf("TOTAL:           %lu\r\n", (unsigned long)(t_edhoc_end - t_keygen_start));
-    kprintf("-----------------------\r\n");
-
+    kprintf("Ephemeral keygen: %lu\r\n", (unsigned long)(t_keygen_end - t_keygen_start));
 #ifdef TIMING_BREAKDOWN
     extern volatile uint32_t _tb_msg1_cyc, _tb_msg3_cyc;
-    uint32_t _tb_keygen = (uint32_t)(t_keygen_end - t_keygen_start);
-    kprintf("\r\n--- Protocol Breakdown (no UART) ---\r\n");
-    kprintf("Key generation : %lu cyc\r\n", (unsigned long)_tb_keygen);
-    kprintf("msg1_gen       : %lu cyc\r\n", (unsigned long)_tb_msg1_cyc);
-    kprintf("msg3_gen       : %lu cyc\r\n", (unsigned long)_tb_msg3_cyc);
-    kprintf("Total (no UART): %lu cyc\r\n",
-            (unsigned long)(_tb_keygen + _tb_msg1_cyc + _tb_msg3_cyc));
-    kprintf("------------------------------------\r\n");
+    kprintf("msg1_gen       : %lu\r\n", (unsigned long)_tb_msg1_cyc);
+    kprintf("msg3_gen       : %lu\r\n", (unsigned long)_tb_msg3_cyc);
+    kprintf("EDHOC total    : %lu\r\n", (unsigned long)(_tb_msg1_cyc + _tb_msg3_cyc));
+    kprintf("Grand total    : %lu\r\n", (unsigned long)((t_keygen_end - t_keygen_start) + _tb_msg1_cyc + _tb_msg3_cyc));
 #endif
+    kprintf("-----------------------\r\n");
 
-// #ifdef DEBUG_PRINT
-//     kprintf("PRK_out: ");
-//     for (uint32_t j = 0; j < prk_out.len; j++) kprintf("%x", prk_out.ptr[j]);
-//     kprintf("\r\n");
-// #endif
+#ifdef DEBUG_PRINT
+    kprintf("PRK_out: ");
+    for (uint32_t j = 0; j < prk_out.len; j++) kprintf("%x", prk_out.ptr[j]);
+    kprintf("\r\n");
+#endif
 
 //     /*========================================================================
 //      * DERIVE OSCORE CONTEXT
@@ -444,7 +422,7 @@ int main(void) {
 //         kprintf("get_suite FAIL: %d\r\n", result);
 //         while (1);
 //     }
-    
+
 //     // Derive PRK_exporter
 //     uint8_t prk_exporter_buf[32];
 //     struct byte_array prk_exporter = {.ptr = prk_exporter_buf, .len = sizeof(prk_exporter_buf)};
@@ -453,7 +431,7 @@ int main(void) {
 //         kprintf("prk_out2exporter FAIL: %d\r\n", result);
 //         while (1);
 //     }
-    
+
 //     // Derive OSCORE Master Secret
 //     uint8_t oscore_master_secret_buf[16];
 //     struct byte_array oscore_master_secret = {.ptr = oscore_master_secret_buf, .len = sizeof(oscore_master_secret_buf)};
@@ -487,12 +465,12 @@ int main(void) {
 //     // Initialize OSCORE context
 //     static struct context oscore_ctx;
 //     memset(&oscore_ctx, 0, sizeof(oscore_ctx));
-    
+
 //     // Per RFC 9528 App. A.1 Table 14: Initiator's OSCORE Sender ID = C_R
 //     static uint8_t sender_id_buf[1];
 //     sender_id_buf[0] = 0x0E;  // C_R (Responder's connection ID)
 //     struct byte_array sender_id_ba = {.ptr = sender_id_buf, .len = 1};
-    
+
 //     struct oscore_init_params oscore_params = {
 //         .master_secret = oscore_master_secret,
 //         .sender_id = sender_id_ba,          // C_R per RFC 9528 Table 14
@@ -502,15 +480,15 @@ int main(void) {
 //         .hkdf = OSCORE_SHA_256,
 //         .fresh_master_secret_salt = true
 //     };
-    
+
 //     result = oscore_context_init(&oscore_params, &oscore_ctx);
 //     if (result != ok) {
 //         kprintf("OSCORE init FAIL: %d\r\n", result);
 //         while (1);
 //     }
-    
+
 //     kprintf("OSCORE READY\r\n");
-    
+
     while (1);
     return 0;
 }

@@ -8,11 +8,13 @@
 #define DEBUG
 #include "kprintf.h"
 
-// Total payload in B
-// CRITICAL: Must be multiple of 512 (sector size) AND fit within MEMORY_MEM_SIZE (64KB)
-// With 64KB SRAM and 2KB stack, we can safely load up to 60KB
-#define PAYLOAD_SIZE_B 61440 // 60KB = 120 sectors (leaves 2KB for stack + 2KB buffer)
-// A sector is 512 bytes, so (1 << 11) * 512B = 1 MiB
+// Total payload in bytes.
+// Reserve 1 kB (0x400) for bootloader stack; remainder must be a multiple of 512.
+// Works for any power-of-two MEMORY_MEM_SIZE that is >= 2 kB
+//   64 kB → 64512 B = 126 sectors
+//    8 kB →  7168 B =  14 sectors
+#define PAYLOAD_SIZE_B (MEMORY_MEM_SIZE - 0x400)
+// A sector is 512 bytes
 #define SECTOR_SIZE_B 512
 // Payload size in # of sectors
 #define PAYLOAD_SIZE (PAYLOAD_SIZE_B / SECTOR_SIZE_B)

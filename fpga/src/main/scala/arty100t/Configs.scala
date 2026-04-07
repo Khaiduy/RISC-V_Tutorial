@@ -3,6 +3,7 @@ package chipyard.fpga.arty100t
 
 import chipyard.ExtTLMem
 import chipyard.config.{WithBroadcastManager, WithTLBackingMemory}
+import chipyard.crypto.trng.WithTRNG
 import freechips.rocketchip.devices.debug.DebugModuleKey
 import freechips.rocketchip.devices.tilelink.BootROMLocated
 import freechips.rocketchip.diplomacy._
@@ -28,7 +29,7 @@ class WithSystemModifications extends Config((site, here, up) => {
     // Build the bootrom
     val make = s"make -C fpga/src/main/resources/arty35t/sdboot XLEN=${site(XLen)} PBUS_CLK=${freqMHz}"
     require (make.! == 0, "Failed to build bootrom")
-    p.copy(hang = 0x10000, contentFileName = s"./fpga/src/main/resources/arty35t/sdboot/build/sdboot.bin")
+    p.copy(hang = 0x10000, size = 0x2000, contentFileName = s"./fpga/src/main/resources/arty35t/sdboot/build/sdboot.bin")
   }
   case DesignKey => (p: Parameters) => new SimpleLazyModule()(p)
   case DebugModuleKey => up(DebugModuleKey).map{ debug =>
@@ -56,8 +57,11 @@ class WithDefaultPeripherals extends Config((site, here, up) => {
   case PeripheryUARTKey => List(
     UARTParams(address = BigInt(0x64000000L)),  // UART0 - USB UART
     UARTParams(address = BigInt(0x64003000L)))  // UART1 - PMOD C
-  case PeripherySPIKey => List(SPIParams(rAddress = BigInt(0x64001000L)))
-  case PeripheryGPIOKey => List(GPIOParams(address = BigInt(0x64002000L), width = 24))
+  case PeripherySPIKey => List(
+    SPIParams(rAddress = BigInt(0x64001000L)),  // SPI0
+    SPIParams(rAddress = BigInt(0x64006000L)),  // SPI1
+    SPIParams(rAddress = BigInt(0x64005000L)))  // SPI2
+  case PeripheryGPIOKey => List(GPIOParams(address = BigInt(0x64002000L), width = 8))
 })
 
 class WithTinyArty100TTweaks extends Config(
@@ -149,11 +153,19 @@ class RocketOnChipSRAMArty100TConfig extends Config( // one small rocket CPU on-
   new chipyard.SmallRocketConfig
 )
 
-// RV32 version of SmallRocket for Arty 100T (no X25519 hardware accelerator)
+// RV32 version of SmallRocket for Arty 100T (with TRNG hardware)
 class SmallRocket32Arty100TConfig extends Config(
+  // new WithTRNG(0x10030000L) ++  // Add TRNG peripheral at address 0x10030000
   new WithTinyArty100TTweaks ++
   new chipyard.config.WithBroadcastManager ++
   new chipyard.SmallRocket32Config
+)
+
+// RV32 version of SmallRocket for Arty 100T — pure software EDHOC (no hardware accelerator)
+class SmallRocket32M3Arty100TConfig extends Config(
+  new WithTinyArty100TTweaks ++
+  new chipyard.config.WithBroadcastManager ++
+  new chipyard.SmallRocket32M3Config
 )
 
 

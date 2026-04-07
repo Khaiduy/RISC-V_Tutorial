@@ -14,7 +14,7 @@
 #include "kprintf.h"
 #include "uart.h"
 #include "edhoc.h"
-#include "monocypher.h"
+#include "crypto_wrapper.h"
 #include "edhoc/edhoc_method_type.h"
 #include "edhoc/suites.h"
 #include "oscore.h"
@@ -34,6 +34,7 @@ static inline int uart1_getc(void) {
 }
 
 enum err tx_responder(void *sock, struct byte_array *data) {
+    (void)sock;
 #ifdef DEBUG_PRINT
     kprintf("[R-TX] Sending %d bytes\r\n", data->len);
 #endif
@@ -50,6 +51,7 @@ enum err tx_responder(void *sock, struct byte_array *data) {
 }
 
 enum err rx_responder(void *sock, struct byte_array *data) {
+    (void)sock;
     int timeout = 100000000, c;
 #ifdef DEBUG_PRINT
     kprintf("[R-RX] Waiting...\r\n");
@@ -98,7 +100,7 @@ enum err rx_responder(void *sock, struct byte_array *data) {
     return ok;
 }
 
-enum err ead_process(void *params, struct byte_array *ead) { return ok; }
+enum err ead_process(void *params, struct byte_array *ead) { (void)params; (void)ead; return ok; }
 
 /*============================================================================
  * KEY MATERIAL
@@ -108,12 +110,8 @@ enum err ead_process(void *params, struct byte_array *ead) { return ok; }
  *   - Static DH keys (r, g_r) - long-term authentication keys
  *============================================================================*/
 
-// Responder's EPHEMERAL private key (Y) - generated per session
-// TODO: In production, generate this randomly using TRNG
-static const uint8_t y_r[] = {
-    0xfb,0xfa,0xc8,0xdb,0x1d,0xc9,0xb2,0x57,0x14,0x4a,0xba,0xad,0x5a,0x1a,0x69,0xb7,
-    0xa7,0xf6,0x66,0x12,0xc4,0xb7,0x13,0x1f,0x7b,0x15,0x58,0x56,0x16,0xd6,0x19,0x47
-};
+// Responder's EPHEMERAL private key (Y) - generated per session via ephemeral_dh_key_gen
+static uint8_t y_r[32];
 
 // Responder's STATIC DH private key (R) - long-term authentication key
 // TODO: Replace with your own static key
@@ -175,24 +173,6 @@ static uint32_t cred_i_len;
 /*============================================================================
  * HELPER FUNCTIONS
  *============================================================================*/
-
-// Compute public key from private key using X25519
-static void generate_public_key(const uint8_t *priv_key, uint8_t *pub_key) {
-    extern int curve25519_donna(uint8_t *mypublic, const uint8_t *secret, const uint8_t *basepoint);
-    const uint8_t basepoint[32] = {9};
-    
-    uint8_t e[32];
-    memcpy(e, priv_key, 32);
-    
-    // Clamp private key (X25519 standard)
-    e[0] &= 0xf8;
-    e[31] &= 0x7f;
-    e[31] |= 0x40;
-    
-    //curve25519_donna(pub_key, e, basepoint); 
-    crypto_x25519_public_key(pub_key, e);
-    memset(e, 0, 32);
-}
 
 // Build CCS credential containing static DH public key
 // Format: {2: "name", 8: {1: {1: 1, 2: kid_bytes, -1: 4, -2: pk_bytes}}}
@@ -260,7 +240,6 @@ int main(void) {
     REG32_UART1(UART_REG_RXCTRL) = UART_RXEN;
     
     uint64_t t_keygen_start = 0, t_keygen_end = 0;
-    uint64_t t_edhoc_start = 0, t_edhoc_end = 0;
 
 #ifdef DEBUG_PRINT
     kprintf("\r\n=================================\r\n");
@@ -269,10 +248,21 @@ int main(void) {
     kprintf("=================================\r\n");
 #endif
     
-    generate_public_key(r_sk, g_r);   // Static DH public key
-    // Generate public keys from private keys
+    // Pre-provisioning (not timed): derive static DH public key from long-term private key.
+    // In production g_r is stored in NVM alongside r_sk.
+    {
+        struct byte_array rsk_ba = {.ptr = (uint8_t *)r_sk, .len = 32};
+        struct byte_array gr_ba = {.ptr = g_r, .len = 32};
+        x25519_public_from_private(&rsk_ba, &gr_ba);
+    }
+
+    // Per-session ephemeral keygen (timed): X25519 base-point multiplication only
     t_keygen_start = read_cycles();
-    generate_public_key(y_r, g_y);    // Ephemeral public key
+    {
+        struct byte_array y_ba = {.ptr = y_r, .len = 32};
+        struct byte_array gy_ba = {.ptr = g_y, .len = 32};
+        ephemeral_dh_key_gen(X25519, 0x00000004U, &y_ba, &gy_ba);
+    }
     t_keygen_end = read_cycles();
     
     // Build credentials with the computed public keys
@@ -322,7 +312,7 @@ int main(void) {
     ctx_r.suites_r.len = sizeof(suites);
     
     // Ephemeral keys (fresh per session)
-    ctx_r.y.ptr = (uint8_t *)y_r;
+    ctx_r.y.ptr = y_r;
     ctx_r.y.len = sizeof(y_r);
     ctx_r.g_y.ptr = g_y;
     ctx_r.g_y.len = sizeof(g_y);
@@ -363,10 +353,8 @@ int main(void) {
     kprintf("\r\n=== EDHOC RESPONDER START ===\r\n");
 #endif
 
-    t_edhoc_start = read_cycles();
     enum err result = edhoc_responder_run(&ctx_r, &cred_i_array, &err_msg, &prk_out,
                                           tx_responder, rx_responder, ead_process);
-    t_edhoc_end = read_cycles();
     
     if (result != ok) {
         kprintf("EDHOC FAIL: %d\r\n", result);
@@ -375,24 +363,16 @@ int main(void) {
     
     kprintf("EDHOC OK!\r\n");
     
-    /* Timing results */
     kprintf("\r\n--- Timing (cycles) ---\r\n");
-    kprintf("Key generation:  %lu\r\n", (unsigned long)(t_keygen_end - t_keygen_start));
-    kprintf("EDHOC protocol:  %lu\r\n", (unsigned long)(t_edhoc_end - t_edhoc_start));
-    kprintf("TOTAL:           %lu\r\n", (unsigned long)(t_edhoc_end - t_keygen_start));
-    kprintf("-----------------------\r\n");
-
+    kprintf("Ephemeral keygen: %lu\r\n", (unsigned long)(t_keygen_end - t_keygen_start));
 #ifdef TIMING_BREAKDOWN
     extern volatile uint32_t _tb_msg2_cyc, _tb_msg3proc_cyc;
-    uint32_t _tb_keygen = (uint32_t)(t_keygen_end - t_keygen_start);
-    kprintf("\r\n--- Protocol Breakdown (no UART) ---\r\n");
-    kprintf("Key generation : %lu cyc\r\n", (unsigned long)_tb_keygen);
-    kprintf("msg2_gen       : %lu cyc\r\n", (unsigned long)_tb_msg2_cyc);
-    kprintf("msg3_process   : %lu cyc\r\n", (unsigned long)_tb_msg3proc_cyc);
-    kprintf("Total (no UART): %lu cyc\r\n",
-            (unsigned long)(_tb_keygen + _tb_msg2_cyc + _tb_msg3proc_cyc));
-    kprintf("------------------------------------\r\n");
+    kprintf("msg2_gen       : %lu\r\n", (unsigned long)_tb_msg2_cyc);
+    kprintf("msg3_process   : %lu\r\n", (unsigned long)_tb_msg3proc_cyc);
+    kprintf("EDHOC total    : %lu\r\n", (unsigned long)(_tb_msg2_cyc + _tb_msg3proc_cyc));
+    kprintf("Grand total    : %lu\r\n", (unsigned long)((t_keygen_end - t_keygen_start) + _tb_msg2_cyc + _tb_msg3proc_cyc));
 #endif
+    kprintf("-----------------------\r\n");
 
 #ifdef DEBUG_PRINT
     kprintf("PRK_out: ");
@@ -400,89 +380,89 @@ int main(void) {
     kprintf("\r\n");
 #endif
 
-//     /*========================================================================
-//      * DERIVE OSCORE CONTEXT
-//      *========================================================================*/
-// #if EDHOC_CRYPTO_SUITE == 0
-//     struct suite current_suite;
-//     result = get_suite(SUITE_0, &current_suite);
-// #elif EDHOC_CRYPTO_SUITE == 1
-//     struct suite current_suite;
-//     result = get_suite(SUITE_1, &current_suite);
-// #else
-//     struct suite current_suite;
-//     result = get_suite(SUITE_0, &current_suite);
-// #endif
-//     if (result != ok) {
-//         kprintf("get_suite FAIL: %d\r\n", result);
-//         while (1);
-//     }
+    /*========================================================================
+     * DERIVE OSCORE CONTEXT
+     *========================================================================*/
+#if EDHOC_CRYPTO_SUITE == 0
+    struct suite current_suite;
+    result = get_suite(SUITE_0, &current_suite);
+#elif EDHOC_CRYPTO_SUITE == 1
+    struct suite current_suite;
+    result = get_suite(SUITE_1, &current_suite);
+#else
+    struct suite current_suite;
+    result = get_suite(SUITE_0, &current_suite);
+#endif
+    if (result != ok) {
+        kprintf("get_suite FAIL: %d\r\n", result);
+        while (1);
+    }
     
-//     // Derive PRK_exporter
-//     uint8_t prk_exporter_buf[32];
-//     struct byte_array prk_exporter = {.ptr = prk_exporter_buf, .len = sizeof(prk_exporter_buf)};
-//     result = prk_out2exporter(current_suite.edhoc_hash, &prk_out, &prk_exporter);
-//     if (result != ok) {
-//         kprintf("prk_out2exporter FAIL: %d\r\n", result);
-//         while (1);
-//     }
+    // Derive PRK_exporter
+    uint8_t prk_exporter_buf[32];
+    struct byte_array prk_exporter = {.ptr = prk_exporter_buf, .len = sizeof(prk_exporter_buf)};
+    result = prk_out2exporter(current_suite.edhoc_hash, &prk_out, &prk_exporter);
+    if (result != ok) {
+        kprintf("prk_out2exporter FAIL: %d\r\n", result);
+        while (1);
+    }
     
-//     // Derive OSCORE Master Secret
-//     uint8_t oscore_master_secret_buf[16];
-//     struct byte_array oscore_master_secret = {.ptr = oscore_master_secret_buf, .len = sizeof(oscore_master_secret_buf)};
-//     result = edhoc_exporter(current_suite.edhoc_hash, OSCORE_MASTER_SECRET, &prk_exporter, &oscore_master_secret);
-//     if (result != ok) {
-//         kprintf("OSCORE MS FAIL: %d\r\n", result);
-//         while (1);
-//     }
+    // Derive OSCORE Master Secret
+    uint8_t oscore_master_secret_buf[16];
+    struct byte_array oscore_master_secret = {.ptr = oscore_master_secret_buf, .len = sizeof(oscore_master_secret_buf)};
+    result = edhoc_exporter(current_suite.edhoc_hash, OSCORE_MASTER_SECRET, &prk_exporter, &oscore_master_secret);
+    if (result != ok) {
+        kprintf("OSCORE MS FAIL: %d\r\n", result);
+        while (1);
+    }
 
-// #ifdef DEBUG_PRINT
-//     kprintf("OSCORE Master Secret: ");
-//     for (uint32_t j = 0; j < oscore_master_secret.len; j++) kprintf("%x", oscore_master_secret.ptr[j]);
-//     kprintf("\r\n");
-// #endif
+#ifdef DEBUG_PRINT
+    kprintf("OSCORE Master Secret: ");
+    for (uint32_t j = 0; j < oscore_master_secret.len; j++) kprintf("%x", oscore_master_secret.ptr[j]);
+    kprintf("\r\n");
+#endif
 
-//     // Derive OSCORE Master Salt
-//     uint8_t oscore_master_salt_buf[8];
-//     struct byte_array oscore_master_salt = {.ptr = oscore_master_salt_buf, .len = sizeof(oscore_master_salt_buf)};
-//     result = edhoc_exporter(current_suite.edhoc_hash, OSCORE_MASTER_SALT, &prk_exporter, &oscore_master_salt);
-//     if (result != ok) {
-//         kprintf("OSCORE Salt FAIL: %d\r\n", result);
-//         while (1);
-//     }
+    // Derive OSCORE Master Salt
+    uint8_t oscore_master_salt_buf[8];
+    struct byte_array oscore_master_salt = {.ptr = oscore_master_salt_buf, .len = sizeof(oscore_master_salt_buf)};
+    result = edhoc_exporter(current_suite.edhoc_hash, OSCORE_MASTER_SALT, &prk_exporter, &oscore_master_salt);
+    if (result != ok) {
+        kprintf("OSCORE Salt FAIL: %d\r\n", result);
+        while (1);
+    }
 
-// #ifdef DEBUG_PRINT
-//     kprintf("OSCORE Master Salt: ");
-//     for (uint32_t j = 0; j < oscore_master_salt.len; j++) kprintf("%x", oscore_master_salt.ptr[j]);
-//     kprintf("\r\n");
-// #endif
+#ifdef DEBUG_PRINT
+    kprintf("OSCORE Master Salt: ");
+    for (uint32_t j = 0; j < oscore_master_salt.len; j++) kprintf("%x", oscore_master_salt.ptr[j]);
+    kprintf("\r\n");
+#endif
 
-//     // Initialize OSCORE context (Responder: sender_id = C_R, recipient_id = C_I)
-//     static struct context oscore_ctx;
-//     memset(&oscore_ctx, 0, sizeof(oscore_ctx));
+    // Initialize OSCORE context (Responder: sender_id = C_R, recipient_id = C_I)
+    static struct context oscore_ctx;
+    memset(&oscore_ctx, 0, sizeof(oscore_ctx));
     
-//     // Per RFC 9528 App. A.1 Table 14: Responder's OSCORE Sender ID = C_I
-//     static uint8_t sender_id_buf[1];
-//     sender_id_buf[0] = 0x2D;  // C_I (Initiator's connection ID)
-//     struct byte_array sender_id_ba = {.ptr = sender_id_buf, .len = 1};
+    // Per RFC 9528 App. A.1 Table 14: Responder's OSCORE Sender ID = C_I
+    static uint8_t sender_id_buf[1];
+    sender_id_buf[0] = 0x2D;  // C_I (Initiator's connection ID)
+    struct byte_array sender_id_ba = {.ptr = sender_id_buf, .len = 1};
     
-//     struct oscore_init_params oscore_params = {
-//         .master_secret = oscore_master_secret,
-//         .sender_id = sender_id_ba,          // C_I per RFC 9528 Table 14
-//         .recipient_id = ctx_r.c_r,          // C_R per RFC 9528 Table 14
-//         .master_salt = oscore_master_salt,
-//         .aead_alg = OSCORE_AES_CCM_16_64_128,
-//         .hkdf = OSCORE_SHA_256,
-//         .fresh_master_secret_salt = true
-//     };
+    struct oscore_init_params oscore_params = {
+        .master_secret = oscore_master_secret,
+        .sender_id = sender_id_ba,          // C_I per RFC 9528 Table 14
+        .recipient_id = ctx_r.c_r,          // C_R per RFC 9528 Table 14
+        .master_salt = oscore_master_salt,
+        .aead_alg = OSCORE_AES_CCM_16_64_128,
+        .hkdf = OSCORE_SHA_256,
+        .fresh_master_secret_salt = true
+    };
     
-//     result = oscore_context_init(&oscore_params, &oscore_ctx);
-//     if (result != ok) {
-//         kprintf("OSCORE init FAIL: %d\r\n", result);
-//         while (1);
-//     }
+    result = oscore_context_init(&oscore_params, &oscore_ctx);
+    if (result != ok) {
+        kprintf("OSCORE init FAIL: %d\r\n", result);
+        while (1);
+    }
     
-//     kprintf("OSCORE READY\r\n");
+    kprintf("OSCORE READY\r\n");
     
     while (1);
     return 0;

@@ -38,10 +38,14 @@ class WithSystemModifications extends Config((site, here, up) => {
   case SerialTLKey => None
 })
 
+
 class WithDefaultPeripherals extends Config((site, here, up) => {
   case PeripheryUARTKey => List(UARTParams(address = BigInt(0x64000000L)))
-  case PeripherySPIKey => List(SPIParams(rAddress = BigInt(0x64001000L)))
-  case PeripheryGPIOKey => List(GPIOParams(address = BigInt(0x64002000L), width = 24))
+  case PeripherySPIKey => List(
+    SPIParams(rAddress = BigInt(0x64001000L)),  // SPI0
+    SPIParams(rAddress = BigInt(0x64004000L)),  // SPI1  
+    SPIParams(rAddress = BigInt(0x64005000L)))  // SPI2
+  case PeripheryGPIOKey => List(GPIOParams(address = BigInt(0x64002000L), width = 8))
   // case PeripheryGCDKey => List(GCDParams2(BigInt(0x64003000L)))
 })
 
@@ -88,4 +92,11 @@ class SmallRocketArty35TConfig extends Config(
   new WithTinyArty35TTweaks ++
   new chipyard.config.WithBroadcastManager ++
   new chipyard.SmallRocketConfig
+)
+
+// RV32 SmallRocket for Arty35T — pure software EDHOC (no hardware accelerator)
+class SmallRocket32M3Arty35TConfig extends Config(
+  new WithTinyArty35TTweaks ++
+  new chipyard.config.WithBroadcastManager ++
+  new chipyard.SmallRocket32M3Config
 )

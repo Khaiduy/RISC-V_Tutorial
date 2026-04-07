@@ -14,6 +14,6 @@ abstract class Arty35TShellCustomOverlays()(implicit p: Parameters) extends Seri
   // Peripheries
   val jtag  = Overlay(JTAGDebugOverlayKey, new JTAGDebugArtyShellPlacer(this, JTAGDebugShellInput()))
   val uart  = Overlay(UARTOverlayKey, new UARTArtyShellPlacer(this, UARTShellInput()))
-  val sdio  = Overlay(SPIOverlayKey, new SDIOArtyShellPlacer(this, SPIShellInput()))
-  val gpio  = Seq.tabulate(24)(i => {Overlay(GPIOOverlayKey, new GPIOArtyShellPlacer(this, GPIOShellInput()))})
+  val sdio  = Seq.tabulate(3)(i => Overlay(SPIOverlayKey, new SDIOArtyShellPlacer(this, SPIShellInput())(valName = freechips.rocketchip.diplomacy.ValName(s"sdio_$i"))))
+  val gpio  = Overlay(GPIOOverlayKey, new GPIOArtyShellPlacer(this, GPIOShellInput()))
 }

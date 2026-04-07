@@ -48,8 +48,10 @@ class Arty100TwoDDRHarness(override implicit val p: Parameters) extends Arty100T
   }
 
   /*** SDIO ***/
-  val io_spi_bb = BundleBridgeSource(() => (new SPIPortIO(dp(PeripherySPIKey).head)))
-  dp(SPIOverlayKey).head.place(SPIDesignInput(dp(PeripherySPIKey).head, io_spi_bb))
+  val io_spi_bb = dp(PeripherySPIKey).map(p => BundleBridgeSource(() => (new SPIPortIO(p))))
+  (dp(SPIOverlayKey) zip dp(PeripherySPIKey)).zipWithIndex.map { case ((placer, params), i) =>
+    placer.place(SPIDesignInput(params, io_spi_bb(i)))
+  }
 
   // Module implementation
   override lazy val module = new Arty100TwoDDRHarnessImp(this)
@@ -123,8 +125,10 @@ class Arty100TDDRHarness(override implicit val p: Parameters) extends Arty100TSh
   }
 
   /*** SDIO ***/
-  val io_spi_bb = BundleBridgeSource(() => (new SPIPortIO(dp(PeripherySPIKey).head)))
-  dp(SPIOverlayKey).head.place(SPIDesignInput(dp(PeripherySPIKey).head, io_spi_bb))
+  val io_spi_bb = dp(PeripherySPIKey).map(p => BundleBridgeSource(() => (new SPIPortIO(p))))
+  (dp(SPIOverlayKey) zip dp(PeripherySPIKey)).zipWithIndex.map { case ((placer, params), i) =>
+    placer.place(SPIDesignInput(params, io_spi_bb(i)))
+  }
 
   // Module implementation
   override lazy val module = new Arty100TDDRHarnessImp(this)
@@ -203,8 +207,10 @@ class Arty100TWithoutDDRHarness(override implicit val p: Parameters) extends Art
   }
 
   /*** SDIO ***/
-  val io_spi_bb = BundleBridgeSource(() => (new SPIPortIO(dp(PeripherySPIKey).head)))
-  dp(SPIOverlayKey).head.place(SPIDesignInput(dp(PeripherySPIKey).head, io_spi_bb))
+  val io_spi_bb = dp(PeripherySPIKey).map(p => BundleBridgeSource(() => (new SPIPortIO(p))))
+  (dp(SPIOverlayKey) zip dp(PeripherySPIKey)).zipWithIndex.map { case ((placer, params), i) =>
+    placer.place(SPIDesignInput(params, io_spi_bb(i)))
+  }
 
   // Module implementation
   override lazy val module = new Arty100TWithoutDDRHarnessImp(this)

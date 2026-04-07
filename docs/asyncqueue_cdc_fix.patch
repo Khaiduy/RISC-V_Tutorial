@@ -1,0 +1,50 @@
+--- a/generators/rocket-chip/src/main/scala/util/AsyncQueue.scala
++++ b/generators/rocket-chip/src/main/scala/util/AsyncQueue.scala
+@@ -99,14 +99,19 @@ class AsyncQueueSource[T <: Data](gen: T, params: AsyncQueueParams = AsyncQueue
+   }
+ 
+   io.async.safe.foreach { sio =>
++    // CDC FIX: Pre-register combined reset to avoid combinational logic on async clear pins
++    // This prevents CDC-10 violations: "Combinational logic detected before a synchronizer"
++    val combined_reset_source = withClockAndReset(clock, reset.asAsyncReset) {
++      RegNext(reset.asBool || !sio.sink_reset_n, true.B).suggestName("combined_reset_reg")
++    }.asAsyncReset
++    
+     val source_valid_0 = Module(new AsyncValidSync(params.sync, "source_valid_0"))
+     val source_valid_1 = Module(new AsyncValidSync(params.sync, "source_valid_1"))
+ 
+     val sink_extend  = Module(new AsyncValidSync(params.sync, "sink_extend"))
+     val sink_valid   = Module(new AsyncValidSync(params.sync, "sink_valid"))
+-    source_valid_0.reset := (reset.asBool || !sio.sink_reset_n).asAsyncReset
+-    source_valid_1.reset := (reset.asBool || !sio.sink_reset_n).asAsyncReset
+-    sink_extend   .reset := (reset.asBool || !sio.sink_reset_n).asAsyncReset
++    source_valid_0.reset := combined_reset_source
++    source_valid_1.reset := combined_reset_source
++    sink_extend   .reset := combined_reset_source
+     sink_valid    .reset := reset.asAsyncReset
+ 
+     source_valid_0.clock := clock
+@@ -167,14 +172,19 @@ class AsyncQueueSink[T <: Data](gen: T, params: AsyncQueueParams = AsyncQueuePa
+   io.async.ridx := ridx_reg
+ 
+   io.async.safe.foreach { sio =>
++    // CDC FIX: Pre-register combined reset to avoid combinational logic on async clear pins
++    // This prevents CDC-10 violations: "Combinational logic detected before a synchronizer"
++    val combined_reset_sink = withClockAndReset(clock, reset.asAsyncReset) {
++      RegNext(reset.asBool || !sio.source_reset_n, true.B).suggestName("combined_reset_reg")
++    }.asAsyncReset
++    
+     val sink_valid_0    = Module(new AsyncValidSync(params.sync, "sink_valid_0"))
+     val sink_valid_1    = Module(new AsyncValidSync(params.sync, "sink_valid_1"))
+ 
+     val source_extend = Module(new AsyncValidSync(params.sync, "source_extend"))
+     val source_valid  = Module(new AsyncValidSync(params.sync, "source_valid"))
+-    sink_valid_0 .reset := (reset.asBool || !sio.source_reset_n).asAsyncReset
+-    sink_valid_1 .reset := (reset.asBool || !sio.source_reset_n).asAsyncReset
+-    source_extend.reset := (reset.asBool || !sio.source_reset_n).asAsyncReset
++    sink_valid_0 .reset := combined_reset_sink
++    sink_valid_1 .reset := combined_reset_sink
++    source_extend.reset := combined_reset_sink
+     source_valid .reset := reset.asAsyncReset
+ 
+     sink_valid_0 .clock := clock
