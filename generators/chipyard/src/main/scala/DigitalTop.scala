@@ -28,9 +28,12 @@ class DigitalTop(implicit p: Parameters) extends ChipyardSystem
   with icenet.CanHavePeripheryIceNIC // Enables optionally adding the IceNIC for FireSim
 
   with chipyard.crypto.x25519.CanHavePeripheryX25519 // Enables optionally adding the X25519 accelerator
+  with chipyard.crypto.edhoc.CanHavePeripheryEDHOC // Enables optionally adding the EDHOC accelerator
+  with chipyard.crypto.edhoc.CanHavePeripheryEDHOCM3 // Enables optionally adding the EDHOC M3 accelerator
   with chipyard.crypto.aes_gcm.CanHavePeripheryAESGCM // Enables optionally adding the AESGCM accelerator
   with chipyard.crypto.ascon.CanHavePeripheryASCON // Enables optionally adding the ASCON accelerator
   with chipyard.crypto.hmac_sha.CanHavePeripheryHMAC_SHA // Enables optionally adding the HMAC_SHA accelerator
+  with chipyard.crypto.trng.CanHavePeripheryTRNG // Enables optionally adding the TRNG peripheral
 
   with chipyard.example.CanHavePeripheryInitZero // Enables optionally adding the initzero example widget
   with chipyard.example.CanHavePeripheryGCD // Enables optionally adding the GCD example widget
@@ -53,5 +56,6 @@ class DigitalTopModule[+L <: DigitalTop](l: L) extends ChipyardSystemModule(l)
   with sifive.blocks.devices.spi.HasPeripherySPIFlashModuleImp
   with sifive.blocks.devices.spi.HasPeripherySPIModuleImp
   with chipyard.example.CanHavePeripheryGCDModuleImp
+  with chipyard.crypto.trng.CanHavePeripheryTRNGModuleImp
   with freechips.rocketchip.util.DontTouch
 // DOC include end: DigitalTop

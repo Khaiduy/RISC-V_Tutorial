@@ -437,7 +437,6 @@ int main(void) {
     kprintf("  EDHOC M3 Hardware-Accelerated Initiator\r\n");
     kprintf("  Method 3 | Suite 0 (X25519 + AES-CCM + HMAC-SHA256)\r\n\r\n");
 
-    t0 = rdcycle64();
     /* ── Reset hardware ── */
     m3_sw_reset();
 
@@ -456,8 +455,7 @@ int main(void) {
     m3_set_params(KID_I, KID_R, C_I, C_R);
 
     /* ── Start as Initiator ── */
-
-    
+    t0 = rdcycle64();
     m3_start_initiator();
 
     /* ══════════════════════════════════════════════════════════════════
@@ -465,8 +463,8 @@ int main(void) {
      * HW computes G_X = X25519(eph_priv, basepoint) and packs MSG1
      * ══════════════════════════════════════════════════════════════════ */
     ret = m3_wait_msg_ready(500000);
-    // t1 = rdcycle64();
-    // cyc_msg1 = t1 - t0;
+    t1 = rdcycle64();
+    cyc_msg1 = t1 - t0;
     if (ret < 0) { kprintf("ERROR: MSG1 timeout (ret=%d)\r\n", ret); goto error; }
 
     msg_len = m3_get_msg_len();
@@ -506,8 +504,9 @@ int main(void) {
 
     // t0 = rdcycle64();
     /* Write MSG2 to data_in[0..] and signal input_ready */
-    m3_write_data_in(msg_buf, msg_len);
     kprintf("[MSG2] Writing %d bytes to hardware...\r\n", msg_len);
+    t0 = rdcycle64();
+    m3_write_data_in(msg_buf, msg_len);
     m3_input_ready(1);
 
     /* ══════════════════════════════════════════════════════════════════
@@ -515,8 +514,8 @@ int main(void) {
      * HW processes MSG2, derives keys, computes MAC_3, encrypts
      * ══════════════════════════════════════════════════════════════════ */
     ret = m3_wait_msg_ready(500000);
-    // t1 = rdcycle64();
-    // cyc_msg23 = t1 - t0;
+    t1 = rdcycle64();
+    cyc_msg23 = t1 - t0;
     if (ret < 0) { kprintf("ERROR: MSG3 timeout (ret=%d)\r\n", ret); goto error; }
 
     msg_len = m3_get_msg_len();
@@ -548,7 +547,7 @@ int main(void) {
     if (ret < 0) { kprintf("ERROR: Failed to receive MSG4\r\n"); goto error; }
     print_hex("MSG4", msg_buf, msg_len);
 
-    // t0 = rdcycle64();
+    t0 = rdcycle64();
     /* Write MSG4 tag to data_in at word offset 18 (byte 72) */
     m3_write_msg4_tag(msg_buf, msg_len);
     

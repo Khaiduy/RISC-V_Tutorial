@@ -65,7 +65,8 @@ static enum err mac(const struct byte_array *prk, const struct byte_array *c_r,
 		BYTE_ARRAY_NEW(c_r_enc, AS_BSTR_SIZE(C_R_SIZE),
 			       AS_BSTR_SIZE(c_r->len));
 		if (c_r_is_raw_int(c_r)) {
-			TRY(encode_int((const int32_t *)c_r->ptr, c_r->len,
+			int32_t c_r_int = (int32_t)c_r->ptr[0];
+			TRY(encode_int(&c_r_int, c_r->len,
 				       &c_r_enc));
 		} else {
 			TRY(encode_bstr(c_r, &c_r_enc));
@@ -154,6 +155,7 @@ signature_or_mac(enum sgn_or_mac_op op, bool static_dh, struct suite *suite,
 			/*signature_or_mac is mac when the caller of this function authenticates with static DH keys*/
 			return ok;
 		} else {
+#ifdef EDHOC_AUTH_SK
 			PRINTF("SIG_STRUCT_SIZE: %d\n", SIG_STRUCT_SIZE);
 			uint32_t sig_struct_size = SIG_STRUCT_SIZE_CALC(
 				COSE_SIGN1_STR_LEN, id_cred->len,
@@ -175,6 +177,9 @@ signature_or_mac(enum sgn_or_mac_op op, bool static_dh, struct suite *suite,
 			PRINT_ARRAY("signature_or_mac (is signature)",
 				    signature_or_mac->ptr,
 				    signature_or_mac->len);
+#else
+			return sign_failed;
+#endif
 		}
 	} else { /*we verify here*/
 		BYTE_ARRAY_NEW(_mac, HASH_SIZE,
@@ -192,6 +197,7 @@ signature_or_mac(enum sgn_or_mac_op op, bool static_dh, struct suite *suite,
 			}
 
 		} else {
+#if defined(EDHOC_AUTH_SK) || defined(EDHOC_PEER_SK)
 			PRINTF("SIG_STRUCT_SIZE: %d\n", SIG_STRUCT_SIZE);
 			uint32_t sig_struct_size = SIG_STRUCT_SIZE_CALC(
 				COSE_SIGN1_STR_LEN, id_cred->len,
@@ -220,6 +226,9 @@ signature_or_mac(enum sgn_or_mac_op op, bool static_dh, struct suite *suite,
 			}
 			PRINT_MSG(
 				"Signature or MAC verification successful!\n");
+#else
+			return signature_authentication_failed;
+#endif
 		}
 	}
 	return ok;

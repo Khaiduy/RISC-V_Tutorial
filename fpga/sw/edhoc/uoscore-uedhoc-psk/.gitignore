@@ -1,8 +1,0 @@
-misk
-build
-build_lib_test
-build_reports
-*.log
-.vscode
-*.cproject
-*.project

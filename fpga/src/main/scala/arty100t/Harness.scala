@@ -34,8 +34,10 @@ class Arty100TwoDDRHarness(override implicit val p: Parameters) extends Arty100T
 
   /*** JTAG ***/
   val jtagModule = dp(JTAGDebugOverlayKey).head.place(JTAGDebugDesignInput()).overlayOutput.jtag
+  // BScan: tunnels through onboard FT2232H USB. Use WithArty100TJTAGBScanHarnessBinder.
+  val jtagBScanModule = dp(JTAGDebugBScanOverlayKey).head.place(JTAGDebugBScanDesignInput()).overlayOutput.jtag
 
-  /*** UART ***/
+  /*** UART *****/
   val io_uart_bb = dp(PeripheryUARTKey).map(p => BundleBridgeSource(() => new UARTPortIO(p)))
   val uartOverlay = (dp(UARTOverlayKey) zip dp(PeripheryUARTKey)).zipWithIndex.map { case ((placer, params), i) =>
     placer.place(UARTDesignInput(io_uart_bb(i)))
@@ -111,6 +113,8 @@ class Arty100TDDRHarness(override implicit val p: Parameters) extends Arty100TSh
 
   /*** JTAG ***/
   val jtagModule = dp(JTAGDebugOverlayKey).head.place(JTAGDebugDesignInput()).overlayOutput.jtag
+  // BScan: tunnels through onboard FT2232H USB. Use WithArty100TJTAGBScanHarnessBinder.
+  val jtagBScanModule = dp(JTAGDebugBScanOverlayKey).head.place(JTAGDebugBScanDesignInput()).overlayOutput.jtag
 
   /*** UART ***/
   val io_uart_bb = dp(PeripheryUARTKey).map(p => BundleBridgeSource(() => new UARTPortIO(p)))
@@ -193,6 +197,8 @@ class Arty100TWithoutDDRHarness(override implicit val p: Parameters) extends Art
 
   /*** JTAG ***/
   val jtagModule = dp(JTAGDebugOverlayKey).head.place(JTAGDebugDesignInput()).overlayOutput.jtag
+  // BScan: tunnels through onboard FT2232H USB. Use WithArty100TJTAGBScanHarnessBinder.
+  val jtagBScanModule = dp(JTAGDebugBScanOverlayKey).head.place(JTAGDebugBScanDesignInput()).overlayOutput.jtag
 
   /*** UART ***/
   val io_uart_bb = dp(PeripheryUARTKey).map(p => BundleBridgeSource(() => new UARTPortIO(p)))

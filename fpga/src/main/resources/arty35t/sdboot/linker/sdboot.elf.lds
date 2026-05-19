@@ -62,7 +62,7 @@ SECTIONS
   PROVIDE(_end = _ebss);
 
   /* Verify bootloader fits in 2KB ROM */
-  ASSERT((_end <= (ORIGIN(bootrom_mem) + LENGTH(bootrom_mem))), 
+  ASSERT((_end <= (ORIGIN(bootrom_mem) + LENGTH(bootrom_mem))),
          "ERROR: Bootloader exceeds 2KB BootROM size!")
 
   /* Global pointer for main RAM access (if needed) */

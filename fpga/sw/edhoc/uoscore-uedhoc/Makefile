@@ -48,7 +48,7 @@ EXTENDED_CFLAGS += $(FEATURES)
 EXTENDED_CFLAGS += $(FEATURES)
 EXTENDED_CFLAGS += $(ARCH)
 EXTENDED_CFLAGS += $(OPT)
-# EXTENDED_CFLAGS += $(DEBUG_PRINT)
+EXTENDED_CFLAGS += $(DEBUG_PRINT)
 EXTENDED_CFLAGS += $(CBOR_ENGINE)
 EXTENDED_CFLAGS += $(OSCORE_NVM_SUPPORT)
 EXTENDED_CFLAGS += $(CRYPTO_ENGINE)
@@ -62,11 +62,12 @@ endif
 #generate debug symbols
 EXTENDED_CFLAGS += -g3 -gdwarf-4
 
+# Enable dead-code elimination at link time
+EXTENDED_CFLAGS += -ffunction-sections -fdata-sections
+
 # Generate dependency information
 EXTENDED_CFLAGS += -MMD -MP -MF"$(@:%.o=%.d)"
 
-# Generate stack usage information
-EXTENDED_CFLAGS += -fstack-usage
 
 # use C11
 EXTENDED_CFLAGS += -std=c11
@@ -127,9 +128,11 @@ endif
 # C includes
 ################################################################################
 # Set a default crypto engine if non is provided in CRYPTO_ENGINE or CC
-ifneq ($(findstring TINYCRYPT,$(EXTENDED_CFLAGS)),TINYCRYPT) 
-ifneq ($(findstring MBEDTLS,$(EXTENDED_CFLAGS)),MBEDTLS) 
+ifneq ($(findstring TINYCRYPT,$(EXTENDED_CFLAGS)),TINYCRYPT)
+ifneq ($(findstring MBEDTLS,$(EXTENDED_CFLAGS)),MBEDTLS)
+ifneq ($(findstring WOLFCRYPT,$(EXTENDED_CFLAGS)),WOLFCRYPT)
 EXTENDED_CFLAGS += -DTINYCRYPT
+endif
 endif
 endif
 
@@ -175,6 +178,13 @@ OBJ = $(addprefix $(DIR)/,$(notdir $(C_SOURCES:.c=.o)))
 $(DIR)/$(LIB_NAME): $(OBJ) 
 	@echo "[Link (Static)]"
 	@$(AR) -rcs $@ $^
+
+# crypto_wrapper.c must NOT be compiled with -flto: LTO whole-program analysis
+# eliminates the ES256 signing branch because alg is a compile-time constant at
+# each call site from signature_or_mac_msg.c, and LTO dead-strips the branch.
+$(DIR)/crypto_wrapper.o: src/common/crypto_wrapper.c Makefile makefile_config.mk
+	@echo [Compile-nolto] $<
+	@$(CC) -c $(filter-out -flto,$(EXTENDED_CFLAGS)) $< -o $@
 
 $(DIR)/%.o: %.c Makefile makefile_config.mk
 	@echo [Compile] $<

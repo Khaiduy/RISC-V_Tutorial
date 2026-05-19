@@ -4,8 +4,8 @@ import chisel3.Clock
 import freechips.rocketchip.diplomacy.{AddressSet, BundleBridgeSource, InModuleBody, LazyModule, ValName}
 import org.chipsalliance.cde.config.Field
 import sifive.fpgashells.clocks.{ClockGroup, ClockSinkNode, ClockSinkParameters, ClockSourceNode}
-import sifive.fpgashells.shell.xilinx.{GPIOXilinxPlacedOverlay, JTAGDebugXilinxPlacedOverlay, LEDXilinxPlacedOverlay, SDIOXilinxPlacedOverlay, SPIFlashXilinxPlacedOverlay, SingleEndedClockInputXilinxPlacedOverlay, UARTXilinxPlacedOverlay}
-import sifive.fpgashells.shell.{CTSResetDesignInput, CTSResetPlacedOverlay, CTSResetShellInput, CTSResetShellPlacer, ClockInputDesignInput, ClockInputShellInput, ClockInputShellPlacer, DDRDesignInput, DDROverlayOutput, DDRPlacedOverlay, DDRShellInput, DDRShellPlacer, GPIODesignInput, GPIOShellInput, GPIOShellPlacer, IOPin, JTAGDebugDesignInput, JTAGDebugShellInput, JTAGDebugShellPlacer, LEDDesignInput, LEDShellInput, LEDShellPlacer, SPIDesignInput, SPIFlashDesignInput, SPIFlashShellInput, SPIFlashShellPlacer, SPIShellInput, SPIShellPlacer, UARTDesignInput, UARTShellInput, UARTShellPlacer}
+import sifive.fpgashells.shell.xilinx.{GPIOXilinxPlacedOverlay, JTAGDebugBScanXilinxPlacedOverlay, JTAGDebugXilinxPlacedOverlay, LEDXilinxPlacedOverlay, SDIOXilinxPlacedOverlay, SPIFlashXilinxPlacedOverlay, SingleEndedClockInputXilinxPlacedOverlay, UARTXilinxPlacedOverlay}
+import sifive.fpgashells.shell.{CTSResetDesignInput, CTSResetPlacedOverlay, CTSResetShellInput, CTSResetShellPlacer, ClockInputDesignInput, ClockInputShellInput, ClockInputShellPlacer, DDRDesignInput, DDROverlayOutput, DDRPlacedOverlay, DDRShellInput, DDRShellPlacer, GPIODesignInput, GPIOShellInput, GPIOShellPlacer, IOPin, JTAGDebugBScanDesignInput, JTAGDebugBScanShellInput, JTAGDebugBScanShellPlacer, JTAGDebugDesignInput, JTAGDebugShellInput, JTAGDebugShellPlacer, LEDDesignInput, LEDShellInput, LEDShellPlacer, SPIDesignInput, SPIFlashDesignInput, SPIFlashShellInput, SPIFlashShellPlacer, SPIShellInput, SPIShellPlacer, UARTDesignInput, UARTShellInput, UARTShellPlacer}
 
 /* =============================================================
 ============================ Clock =============================
@@ -172,4 +172,24 @@ class GPIOArtyShellPlacer(val shell: Arty35TShellCustomOverlays,
                              val shellInput: GPIOShellInput)(implicit val valName: ValName)
   extends GPIOShellPlacer[Arty35TShellCustomOverlays] {
   def place(designInput: GPIODesignInput) = new GPIOArtyPlacedOverlay(shell, valName.name, designInput, shellInput)
+}
+
+/* =============================================================
+========================= JTAG BScan ==========================
+Uses the onboard FT2232H USB chip (Channel A) to tunnel JTAG
+through BSCANE2. No external JTAG adapter needed.
+UART stays on Channel B (/dev/ttyUSB1) and is unaffected.
+===============================================================*/
+class JTAGDebugBScanArtyPlacedOverlay(
+  val shell: Arty35TShellCustomOverlays, name: String,
+  val designInput: JTAGDebugBScanDesignInput,
+  val shellInput: JTAGDebugBScanShellInput)
+  extends JTAGDebugBScanXilinxPlacedOverlay(name, designInput, shellInput)
+
+class JTAGDebugBScanArtyShellPlacer(
+  val shell: Arty35TShellCustomOverlays,
+  val shellInput: JTAGDebugBScanShellInput)(implicit val valName: ValName)
+  extends JTAGDebugBScanShellPlacer[Arty35TShellCustomOverlays] {
+  def place(designInput: JTAGDebugBScanDesignInput) =
+    new JTAGDebugBScanArtyPlacedOverlay(shell, valName.name, designInput, shellInput)
 }

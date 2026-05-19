@@ -25,7 +25,9 @@ OPT = -Os
 ################################################################################
 # Print helpful debug messages
 ################################################################################
-# DEBUG_PRINT += -DDEBUG_PRINT
+ifeq ($(DEBUG),1)
+DEBUG_PRINT += -DDEBUG_PRINT
+endif
 
 ################################################################################
 # Use Address Sanitizer, e.g. with native_posix
@@ -90,13 +92,15 @@ FEATURES += -DSUITES_I_SIZE=1
 # RAM optimization OSCORE
 ################################################################################
 # Max size of an OSCORE plaintext
-FEATURES += -DOSCORE_MAX_PLAINTEXT_LEN=128
+# Set to 1064 (matching oscore.h default = 1024 payload + 40 options) to
+# support the full OSCORE benchmark payload sweep (up to 1000-byte payload).
+FEATURES += -DOSCORE_MAX_PLAINTEXT_LEN=1064
 
 # Max size of the E options buffer
-FEATURES += -DE_OPTIONS_BUFF_MAX_LEN=100
+FEATURES += -DE_OPTIONS_BUFF_MAX_LEN=255
 
 # Max size of the I options buffer
-FEATURES += -DI_OPTIONS_BUFF_MAX_LEN=100
+FEATURES += -DI_OPTIONS_BUFF_MAX_LEN=255
 
 
 ################################################################################
@@ -157,8 +161,14 @@ FEATURES += -DI_OPTIONS_BUFF_MAX_LEN=100
 # | EDHOC  | 0/1/2/3 | 0/1/2/3 | MBEDTLS and COMPACT25519
 
 
+ifneq ($(findstring WOLFCRYPT,$(CFLAGS)),WOLFCRYPT)
 CRYPTO_ENGINE += -DTINYCRYPT
+endif
+# MONOCYPHER is set conditionally by the outer Makefile via CFLAGS
+# to exclude Monocypher for P-256-only suites (2,3,5)
+ifneq ($(findstring MONOCYPHER,$(CFLAGS)),)
 CRYPTO_ENGINE += -DMONOCYPHER
+endif
 #CRYPTO_ENGINE += -DMONOCYPHER
 #
 #CRYPTO_ENGINE += -DMBEDTLS

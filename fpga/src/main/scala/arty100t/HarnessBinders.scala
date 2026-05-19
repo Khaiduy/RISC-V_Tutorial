@@ -99,6 +99,41 @@ class WithArty100TJTAGHarnessBinder extends OverrideHarnessBinder({
   }
 })
 
+/*** JTAG BScan (onboard USB, Channel A — no external adapter needed) ***/
+class WithArty100TJTAGBScanHarnessBinder extends OverrideHarnessBinder({
+  (system: HasPeripheryDebug, th: BaseModule, ports: Seq[Data]) => {
+    ports.map {
+      case jtagIO: JTAGChipIO =>
+        th match {
+          case ath: Arty100TwoDDRHarnessImp => {
+            val jtagBScanModule = ath.athOuter.jtagBScanModule
+            jtagBScanModule.TDO.data := jtagIO.TDO
+            jtagBScanModule.TDO.driven := true.B
+            jtagIO.TCK := jtagBScanModule.TCK
+            jtagIO.TMS := jtagBScanModule.TMS
+            jtagIO.TDI := jtagBScanModule.TDI
+          }
+          case ath: Arty100TDDRHarnessImp => {
+            val jtagBScanModule = ath.athOuter.jtagBScanModule
+            jtagBScanModule.TDO.data := jtagIO.TDO
+            jtagBScanModule.TDO.driven := true.B
+            jtagIO.TCK := jtagBScanModule.TCK
+            jtagIO.TMS := jtagBScanModule.TMS
+            jtagIO.TDI := jtagBScanModule.TDI
+          }
+          case ath: Arty100TWithoutDDRHarnessImp => {
+            val jtagBScanModule = ath.athOuter.jtagBScanModule
+            jtagBScanModule.TDO.data := jtagIO.TDO
+            jtagBScanModule.TDO.driven := true.B
+            jtagIO.TCK := jtagBScanModule.TCK
+            jtagIO.TMS := jtagBScanModule.TMS
+            jtagIO.TDI := jtagBScanModule.TDI
+          }
+        }
+    }
+  }
+})
+
 /*** GPIO ***/
 class WithArty100TGPIOHarnessBinder extends OverrideHarnessBinder({
   (system: HasPeripheryGPIOModuleImp, th: BaseModule, ports: Seq[GPIOPortIO]) => {

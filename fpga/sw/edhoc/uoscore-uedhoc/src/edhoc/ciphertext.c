@@ -116,6 +116,20 @@ static enum err key_gen(enum ciphertext ctxt, enum hash_alg edhoc_hash,
 	return ok;
 }
 
+static uint32_t ciphertext_capacity(enum ciphertext ctxt)
+{
+	switch (ctxt) {
+	case CIPHERTEXT2:
+		return CIPHERTEXT2_SIZE;
+	case CIPHERTEXT3:
+		return CIPHERTEXT3_SIZE;
+	case CIPHERTEXT4:
+		return CIPHERTEXT4_SIZE;
+	}
+
+	return 0;
+}
+
 enum err ciphertext_decrypt_split(
 	enum ciphertext ctxt, struct suite *suite, struct byte_array *c_r,
 	struct byte_array *id_cred, struct byte_array *sig_or_mac,
@@ -149,7 +163,9 @@ enum err ciphertext_decrypt_split(
 		}
 		plaintext->len -= tag_len;
 	}
-	struct byte_array tag = BYTE_ARRAY_INIT(ciphertext->ptr, tag_len);
+	struct byte_array tag =
+		BYTE_ARRAY_INIT(ciphertext->ptr + ciphertext->len - tag_len,
+				tag_len);
 	TRY(ciphertext_encrypt_decrypt(ctxt, DECRYPT, ciphertext, &key, &iv,
 				       &associated_data, plaintext, &tag));
 
@@ -264,7 +280,11 @@ enum err ciphertext_gen(enum ciphertext ctxt, struct suite *suite,
 
 	TRY(ciphertext_encrypt_decrypt(ctxt, ENCRYPT, plaintext, &key, &iv,
 				       &aad, ciphertext, &tag));
-	ciphertext->len += tag.len;
+	if (tag.len != 0) {
+		PRINT_ARRAY("tag", tag.ptr, tag.len);
+		TRY(byte_array_append(ciphertext, &tag,
+				      ciphertext_capacity(ctxt)));
+	}
 
 	PRINT_ARRAY("ciphertext_2/3/4", ciphertext->ptr, ciphertext->len);
 	return ok;

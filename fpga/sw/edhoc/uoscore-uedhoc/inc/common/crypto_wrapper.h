@@ -129,6 +129,46 @@ enum err hkdf_sha_256(struct byte_array *master_secret,
 		      struct byte_array *master_salt, struct byte_array *info,
 		      struct byte_array *out);
 
+/**
+ * @brief			Generates an Ed25519 or ECDSA signing key pair
+ *				from a 32-byte seed.
+ *
+ * @param alg			Signature algorithm (EdDSA).
+ * @param[in] seed		32-byte seed (consumed/wiped by call for EdDSA).
+ * @param[out] sk		Secret key output buffer (64 bytes for EdDSA).
+ * @param[out] pk		Public key output buffer (32 bytes for EdDSA).
+ * @return			Ok or error code.
+ */
+enum err sign_key_gen(enum sign_alg alg, const uint8_t *seed,
+		      struct byte_array *sk, struct byte_array *pk);
+
+/**
+ * @brief			Derives an X25519 public key from a private key
+ *				(scalar multiplication with the base point).
+ *
+ * @param[in] sk		32-byte X25519 private key (already clamped or raw).
+ * @param[out] pk		32-byte X25519 public key output.
+ * @return			Ok or error code.
+ */
+enum err x25519_public_from_private(const struct byte_array *sk,
+				    struct byte_array *pk);
+
+#ifdef WOLFCRYPT
+/* ML-KEM (Kyber) KEM interface — protocol integration pending */
+enum kem_alg {
+	ML_KEM_512  = 0,
+	ML_KEM_768  = 1,
+	ML_KEM_1024 = 2,
+};
+
+enum err kem_keygen(enum kem_alg alg, struct byte_array *ek,
+		    struct byte_array *dk);
+enum err kem_encap(enum kem_alg alg, const struct byte_array *ek,
+		   struct byte_array *ct, struct byte_array *ss);
+enum err kem_decap(enum kem_alg alg, const struct byte_array *dk,
+		   const struct byte_array *ct, struct byte_array *ss);
+#endif /* WOLFCRYPT */
+
 #ifdef EDHOC_MOCK_CRYPTO_WRAPPER
 /*
  * Elliptic curve based signature algorithms generate signatures that are not 

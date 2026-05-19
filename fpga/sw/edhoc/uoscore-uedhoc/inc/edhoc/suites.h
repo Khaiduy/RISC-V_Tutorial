@@ -22,23 +22,42 @@ enum suite_label {
 	SUITE_1 = 1,
 	SUITE_2 = 2,
 	SUITE_3 = 3,
+	SUITE_4 = 4,
+	SUITE_5 = 5,
+	SUITE_6 = 6,
+	SUITE_7 = 7,
+	SUITE_24 = 24,
+	SUITE_25 = 25,
 };
 
 enum aead_alg {
+	AES_GCM_128 = 1,
+	AES_GCM_256 = 3,
 	AES_CCM_16_64_128 = 10,
+	CHACHA20_POLY1305 = 24,
 	AES_CCM_16_128_128 = 30,
+	ASCON_AEAD128 = -100, /* Ascon-AEAD-128 (Suite 7) */
 };
 
-enum hash_alg { SHA_256 = -16 };
+enum hash_alg {
+	SHA_384 = -43,
+	SHAKE_256 = -45,
+	SHA_256 = -16,
+	ASCON_HASH256 = -101, /* Ascon-Hash256 (Suite 7) */
+};
 
 enum ecdh_alg {
 	P256 = 1,
+	P384 = 2,
 	X25519 = 4,
+	X448 = 5,
 };
 
 enum sign_alg {
+	ES384 = -35,
 	ES256 = -7,
 	EdDSA = -8,
+	Ed448 = -49,
 };
 
 enum mac_len {

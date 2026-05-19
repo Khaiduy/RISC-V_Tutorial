@@ -20,19 +20,27 @@
 #endif
 
 #ifndef ID_CRED_I_SIZE
-#define ID_CRED_I_SIZE 400
+#define ID_CRED_I_SIZE 8    /* {4: kid} = 3 bytes; 8 gives headroom */
 #endif
 
 #ifndef ID_CRED_R_SIZE
-#define ID_CRED_R_SIZE 400
+#define ID_CRED_R_SIZE 8    /* {4: kid} = 3 bytes; 8 gives headroom */
 #endif
 
 #ifndef CRED_I_SIZE
-#define CRED_I_SIZE 400
+#define CRED_I_SIZE 72      /* CCS with 32-byte OKP key ~54 bytes; 72 with headroom */
 #endif
 
 #ifndef CRED_R_SIZE
-#define CRED_R_SIZE 400
+#define CRED_R_SIZE 72      /* CCS with 32-byte OKP key ~54 bytes; 72 with headroom */
+#endif
+
+/* Larger keys in suites 24/25 require bigger CRED credential buffers */
+#if EDHOC_CRYPTO_SUITE == 24 || EDHOC_CRYPTO_SUITE == 25
+#  undef CRED_I_SIZE
+#  undef CRED_R_SIZE
+#  define CRED_I_SIZE 128
+#  define CRED_R_SIZE 128
 #endif
 
 #ifndef SUITES_I_SIZE
@@ -50,21 +58,75 @@
 #define P_256_PUB_KEY_COMPRESSED_SIZE 33
 #define P_256_PUB_KEY_UNCOMPRESSED_SIZE 65
 #define P_256_PUB_KEY_X_CORD_SIZE 32
-#define PK_SIZE P_256_PUB_KEY_UNCOMPRESSED_SIZE
-#define G_Y_SIZE P_256_PUB_KEY_X_CORD_SIZE
-#define G_X_SIZE P_256_PUB_KEY_X_CORD_SIZE
-#define G_R_SIZE P_256_PUB_KEY_UNCOMPRESSED_SIZE
-#define G_I_SIZE P_256_PUB_KEY_UNCOMPRESSED_SIZE
-#define SIGNATURE_SIZE 64
+#define X25519_KEY_SIZE 32          /* X25519 key size in bytes */
+#define ED25519_PK_SIZE 32          /* Ed25519 public key size */
+#define ED25519_SK_SIZE 64          /* Ed25519 secret key (extended) size */
+
+#if EDHOC_CRYPTO_SUITE == 24
+/* Suite 24: P-384 / ES384 / AES-256-GCM / SHA-384 */
+#define PK_SIZE          48
+#define G_Y_SIZE         48
+#define G_X_SIZE         48
+#define G_R_SIZE         48
+#define G_I_SIZE         48
+#define SIGNATURE_SIZE   96
+#define ECDH_SECRET_SIZE 48
+#define PRK_SIZE         48
+#define HASH_SIZE        48
+#define AEAD_IV_SIZE     12
+#define SIG_OR_MAC_SIZE  96
+#elif EDHOC_CRYPTO_SUITE == 25
+/* Suite 25: X448 / Ed448 / ChaCha20 / SHAKE-256 */
+#define PK_SIZE          57
+#define G_Y_SIZE         56
+#define G_X_SIZE         56
+#define G_R_SIZE         56
+#define G_I_SIZE         56
+#define SIGNATURE_SIZE  114
+#define ECDH_SECRET_SIZE 56
+#define PRK_SIZE         32
+#define HASH_SIZE        64
+#define AEAD_IV_SIZE     12
+#define SIG_OR_MAC_SIZE 114
+#elif defined(EDHOC_CRYPTO_SUITE) && \
+    (EDHOC_CRYPTO_SUITE == 4 || EDHOC_CRYPTO_SUITE == 5 || EDHOC_CRYPTO_SUITE == 6)
+/* Suites 4,5,6: ChaCha20 or AES-GCM (IV=12) */
+#define PK_SIZE          32
+#define G_Y_SIZE         32
+#define G_X_SIZE         32
+#define G_R_SIZE         32
+#define G_I_SIZE         32
+#define SIGNATURE_SIZE   64
 #define ECDH_SECRET_SIZE 32
-#define PRK_SIZE 32
-#define HASH_SIZE 32
-#define AEAD_IV_SIZE 13
+#define PRK_SIZE         32
+#define HASH_SIZE        32
+#define AEAD_IV_SIZE     12
+#define SIG_OR_MAC_SIZE  64
+#else
+/* Suites 0-3 (default): AES-CCM (IV=13) */
+#define PK_SIZE          32
+#define G_Y_SIZE         32
+#define G_X_SIZE         32
+#define G_R_SIZE         32
+#define G_I_SIZE         32
+#define SIGNATURE_SIZE   64
+#define ECDH_SECRET_SIZE 32
+#define PRK_SIZE         32
+#define HASH_SIZE        32
+#define AEAD_IV_SIZE     13
+#define SIG_OR_MAC_SIZE  64
+#endif
+
 #define MAC_SIZE 16
 #define MAC23_SIZE 32
 #define AAD_SIZE 45
 #define KID_SIZE 8
+/* Default SIG_OR_MAC_SIZE for suites 0-6 (64 bytes = Ed25519/ES256 sig).
+ * Suites 24 (96) and 25 (114) define larger values above; guard prevents
+ * the unconditional redefinition from silently overriding them. */
+#ifndef SIG_OR_MAC_SIZE
 #define SIG_OR_MAC_SIZE 64
+#endif
 #define COSE_SIGN1_STR_LEN 10 /* The length of the string "Signature1" */
 #define COSE_ENC0_STR_LEN 8 /* The length of the string "Encrypt0"   */
 #define CBOR_ENCODED_UINT 2
@@ -82,7 +144,10 @@
 #define CIPHERTEXT3_SIZE PLAINTEXT3_SIZE + MAC_SIZE
 
 #define PLAINTEXT4_SIZE EAD_SIZE + COSE_ENC0_STR_LEN
-#define CIPHERTEXT4_SIZE PLAINTEXT4_SIZE
+/* CIPHERTEXT4 = PLAINTEXT4 + AEAD tag. MAC_SIZE=16 covers the maximum tag
+ * length (ChaCha20/Poly1305, AES-CCM-16-128-128). Without this headroom the
+ * initiator's decode_bstr call overflows for any suite with a 16-byte tag. */
+#define CIPHERTEXT4_SIZE (PLAINTEXT4_SIZE + MAC_SIZE)
 
 #define MSG_1_SIZE                                                             \
 	(1 + SUITES_I_SIZE + G_X_SIZE + AS_BSTR_SIZE(C_I_SIZE) + EAD_SIZE)

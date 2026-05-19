@@ -27,7 +27,7 @@ extern void kprintf(const char *, ...);
 
 enum err id_cred2kid(const struct byte_array *id_cred, struct byte_array *kid)
 {
-        kprintf("id_cred: len=%d\n", id_cred->len);
+        // kprintf("id_cred: len=%d\n", id_cred->len);
         if (id_cred->len != 3) return 999;
         if (id_cred->ptr[0] != 0xa1) return 998;
 	struct id_cred_x_map map = { 0 };

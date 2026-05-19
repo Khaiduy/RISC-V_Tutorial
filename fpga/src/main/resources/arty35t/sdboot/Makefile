@@ -23,7 +23,9 @@ CFLAGS+= -I $(ROOT_DIR)/include -I.
 PBUS_CLK ?= 1000000 # default to 1MHz but really should be overridden
 
 # SRAM_SIZE: target scratchpad size in bytes (hex).
-# 0x10000 = 64 kB (SmallRocket32Config, SmallRocket32M3Config).
+# 0x20000 = 128 kB (SmallRocket32M3Config — pure-SW EDHOC, default)
+# 0x10000 =  64 kB (SmallRocket32Config / SmallRocket32M3HWConfig — hardware-accelerated EDHOC M3)
+# 0x2000  =   8 kB (reserved / minimal)
 SRAM_SIZE ?= 0x10000
 CFLAGS += -DSRAM_SIZE=$(SRAM_SIZE)
 

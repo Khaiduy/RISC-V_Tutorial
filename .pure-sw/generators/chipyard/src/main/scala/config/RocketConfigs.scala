@@ -12,7 +12,7 @@ class RocketConfig extends Config(
   new chipyard.config.AbstractConfig)
 
 class SmallRocketConfig extends Config(
-    new testchipip.WithMbusScratchpad(base = 0x80000000L, size=BigInt(64 << 10)) ++   // SRAM on-chip 64kB
+    new testchipip.WithMbusScratchpad(base = 0x80000000L, size=BigInt(128 << 10)) ++   // SRAM on-chip 64kB
     new freechips.rocketchip.subsystem.WithNSmallCores(1) ++         // single rocket-core
     new freechips.rocketchip.subsystem.WithoutTLMonitors ++
     new chipyard.config.AbstractConfig)
@@ -23,7 +23,7 @@ class SmallRocket32Config extends Config(
   new freechips.rocketchip.subsystem.WithRV32 ++                    // 32-bit RISC-V
     new chipyard.iobinders.WithDontTouchIOBinders(false) ++
     // new chipyard.crypto.edhoc.WithEDHOC(address = BigInt(0x64004000L)) ++ // add EDHOC+OSCORE accelerator
-    new testchipip.WithMbusScratchpad(base = 0x80000000L, size=BigInt(64 << 10)) ++   // SRAM on-chip 64kB
+    new testchipip.WithMbusScratchpad(base = 0x80000000L, size=BigInt(128 << 10)) ++   // SRAM on-chip 64kB
     new freechips.rocketchip.subsystem.WithNoMemPort ++             // remove off-chip mem port
     new freechips.rocketchip.subsystem.WithNSmallCores(1) ++        // single small rocket-core
     new freechips.rocketchip.subsystem.WithoutTLMonitors ++
@@ -34,7 +34,7 @@ class SmallRocket32Config extends Config(
 class SmallRocket32M3Config extends Config(
   new freechips.rocketchip.subsystem.WithRV32 ++                    // 32-bit RISC-V
     new chipyard.iobinders.WithDontTouchIOBinders(false) ++
-    new testchipip.WithMbusScratchpad(base = 0x80000000L, size=BigInt(64 << 10)) ++   // SRAM on-chip 64kB
+    new testchipip.WithMbusScratchpad(base = 0x80000000L, size=BigInt(128 << 10)) ++   // SRAM on-chip 64kB
     new freechips.rocketchip.subsystem.WithNoMemPort ++             // remove off-chip mem port
     new freechips.rocketchip.subsystem.WithNSmallCores(1) ++        // single small rocket-core
     new freechips.rocketchip.subsystem.WithoutTLMonitors ++

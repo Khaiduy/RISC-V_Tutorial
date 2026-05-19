@@ -21,6 +21,8 @@
  *@param in_len			The length of the array.
  */
 void print_array(const uint8_t *in_data, uint32_t in_len);
+void print_labeled_array(const char *label, const uint8_t *in_data,
+				 uint32_t in_len);
 
 /**
  * @brief 			In case of an error this function prints where 
@@ -60,15 +62,27 @@ static const char external_runtime_error_message[] = {
 };
 
 #define PRINT_ARRAY(msg, a, a_len)                                             \
-	kprintf(msg);                                                               \
-	kprintf("\r\n");                                                              \
-	print_array(a, a_len);
-#define PRINT_MSG(msg) kprintf(msg);
-#define PRINTF(f_, ...) kprintf((f_), ##__VA_ARGS__);
+	do {                                                                     \
+		print_labeled_array((msg), (a), (a_len));                         \
+	} while (0)
+#define PRINT_MSG(msg)                                                         \
+	do {                                                                     \
+		kprintf("%s", (msg));                                             \
+	} while (0)
+#define PRINTF(f_, ...)                                                        \
+	do {                                                                     \
+		kprintf((f_), ##__VA_ARGS__);                                       \
+	} while (0)
 #else
-#define PRINT_ARRAY(msg, a, a_len) {};
-#define PRINT_MSG(msg) {};
-#define PRINTF(f_, ...) {};
+#define PRINT_ARRAY(msg, a, a_len)                                             \
+	do {                                                                     \
+	} while (0)
+#define PRINT_MSG(msg)                                                         \
+	do {                                                                     \
+	} while (0)
+#define PRINTF(f_, ...)                                                        \
+	do {                                                                     \
+	} while (0)
 #endif
 
 #endif

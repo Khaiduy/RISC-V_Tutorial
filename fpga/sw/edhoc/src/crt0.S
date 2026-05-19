@@ -10,8 +10,10 @@ _prog_start:
   // perform boot if hart_0, otherwise sleep
   csrr s0, mhartid
   bne s0, zero, _stop
-  csrw mie, s2
-  la sp, _ram_end    // Load address of _ram_end from linker script
+  csrw mie, zero    // Disable all M-mode interrupt enables (s2 may be non-zero from prior run)
+  la t0, _trap_handler
+  csrw mtvec, t0    // Set trap vector to safe handler (catches any stale pending interrupt)
+  la sp, _ram_end        // Load address of _ram_end from linker script
   
   // Clear .bss section (required for static variables to be zero-initialized)
   la t0, _fbss
@@ -33,3 +35,10 @@ _stop:
   wfi
 _loopback:
   j _loopback
+
+  .align 2
+_trap_handler:
+  // Minimal trap handler: clear mie + return (handles any stale pending interrupt on boot)
+  csrw mie, zero
+  csrw mstatus, zero
+  mret

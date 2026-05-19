@@ -76,6 +76,7 @@ class WithTinyArty100TTweaks extends Config(
   new WithArty100TUARTHarnessBinder ++    // from HarnessBinders, to connect the Harness to IO of module
   new WithArty100TSPISDCardHarnessBinder ++
   new WithArty100TJTAGHarnessBinder ++
+  // new WithArty100TJTAGBScanHarnessBinder ++
   new WithArty100TGPIOHarnessBinder ++
   new WithArty100TTSITieoff ++
   // IO Binders
@@ -168,6 +169,36 @@ class SmallRocket32M3Arty100TConfig extends Config(
   new chipyard.SmallRocket32M3Config
 )
 
+// Boot ROM override for M3 HW config: builds sdboot with SRAM_SIZE=0x2000 (8 kB)
+// Placed before WithTinyArty100TTweaks so it takes priority over WithSystemModifications.
+class WithM3HWBootROM extends Config((site, here, up) => {
+  case BootROMLocated(x) => up(BootROMLocated(x), site).map { p =>
+    val freqMHz = (site(SystemBusKey).dtsFrequency.get / (1000 * 1000)).toLong
+    val clean = s"make -C fpga/src/main/resources/arty35t/sdboot clean"
+    require(clean.! == 0, "Failed to clean sdboot")
+    val make = s"make -C fpga/src/main/resources/arty35t/sdboot XLEN=${site(XLen)} PBUS_CLK=${freqMHz} SRAM_SIZE=0x2000"
+    require(make.! == 0, "Failed to build sdboot for M3 HW (8 kB)")
+    p.copy(hang = 0x10000, size = 0x2000, contentFileName = s"./fpga/src/main/resources/arty35t/sdboot/build/sdboot.bin")
+  }
+})
+
+// RV32 hardware-accelerated EDHOC M3 for Arty 100T — 8 kB scratchpad, edhoc_m3_top at 0x64004000
+class SmallRocket32M3HWArty100TConfig extends Config(
+  // new WithM3HWBootROM ++
+  new WithTinyArty100TTweaks ++
+  new chipyard.config.WithBroadcastManager ++
+  new chipyard.SmallRocket32M3HWConfig
+)
+
+
+// 100 MHz timing-analysis config — do NOT use for functional runs (Fmax ~95 MHz)
+class SmallRocket32M3HW100MHzArty100TConfig extends Config(
+  new chipyard.harness.WithHarnessBinderClockFreqMHz(100) ++
+  new chipyard.config.WithMemoryBusFrequency(100.0) ++
+  new chipyard.config.WithSystemBusFrequency(100.0) ++
+  new chipyard.config.WithPeripheryBusFrequency(100.0) ++
+  new SmallRocket32M3HWArty100TConfig
+)
 
 // class RocketDDRArty100TConfig extends Config(// one small rocket CPU with DDR
 //   new WithDDRArty100TTweaks ++

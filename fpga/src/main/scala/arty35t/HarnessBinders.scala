@@ -35,7 +35,7 @@ class WithArty35TSPISDCardHarnessBinder extends OverrideHarnessBinder({
   }
 })
 
-/*** JTAG ***/
+/*** JTAG (PMOD JD) ***/
 class WithArty35TJTAGHarnessBinder extends OverrideHarnessBinder({
   (system: HasPeripheryDebug, th: BaseModule, ports: Seq[Data]) => {
     ports.map {
@@ -48,6 +48,25 @@ class WithArty35TJTAGHarnessBinder extends OverrideHarnessBinder({
             jtagIO.TCK := jtagModule.TCK
             jtagIO.TMS := jtagModule.TMS
             jtagIO.TDI := jtagModule.TDI
+          }
+        }
+    }
+  }
+})
+
+/*** JTAG BScan (onboard USB, Channel A — no external adapter needed) ***/
+class WithArty35TJTAGBScanHarnessBinder extends OverrideHarnessBinder({
+  (system: HasPeripheryDebug, th: BaseModule, ports: Seq[Data]) => {
+    ports.map {
+      case jtagIO: JTAGChipIO =>
+        th match {
+          case ath: Arty35TwoDDRHarnessImp => {
+            val jtagBScanModule = ath.athOuter.jtagBScanModule
+            jtagBScanModule.TDO.data := jtagIO.TDO
+            jtagBScanModule.TDO.driven := true.B
+            jtagIO.TCK := jtagBScanModule.TCK
+            jtagIO.TMS := jtagBScanModule.TMS
+            jtagIO.TDI := jtagBScanModule.TDI
           }
         }
     }

@@ -1,4 +1,0 @@
-name: uoscore-uedhoc
-build:
-  cmake-ext: True
-  kconfig-ext: True

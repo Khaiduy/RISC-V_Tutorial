@@ -23,235 +23,59 @@
 
 #ifdef EDHOC_MOCK_CRYPTO_WRAPPER
 struct edhoc_mock_cb edhoc_crypto_mock_cb;
-#endif // EDHOC_MOCK_CRYPTO_WRAPPER
-
-#ifdef MBEDTLS
-/*
-IMPORTANT!!!!
-make sure MBEDTLS_PSA_CRYPTO_CONFIG is defined in include/mbedtls/mbedtls_config.h
-
-
-modify setting in include/psa/crypto_config.h 
-*/
-#define MBEDTLS_ALLOW_PRIVATE_ACCESS
-
-#include <psa/crypto.h>
-
-#include "mbedtls/ecp.h"
-#include "mbedtls/platform.h"
-#include "mbedtls/entropy.h"
-#include "mbedtls/ctr_drbg.h"
-#include "mbedtls/ecdsa.h"
-#include "mbedtls/error.h"
-#include "mbedtls/rsa.h"
-#include "mbedtls/x509.h"
-
 #endif
 
 #ifdef COMPACT25519
 #include <c25519.h>
 #include <edsign.h>
-//#include <compact_x25519.h>
 #endif
 
-#if defined(MONOCYPHER)
-#include <monocypher.h>
-#include "optional/monocypher-ed25519.h"
+#ifdef WOLFCRYPT
+#include <wolfssl/wolfcrypt/aes.h>
+#include <wolfssl/wolfcrypt/chacha20_poly1305.h>
+#include <wolfssl/wolfcrypt/sha256.h>
+#include <wolfssl/wolfcrypt/sha512.h>
+#include <wolfssl/wolfcrypt/sha3.h>
+#include <wolfssl/wolfcrypt/hmac.h>
+#include <wolfssl/wolfcrypt/kdf.h>
+#include <wolfssl/wolfcrypt/hash.h>
+#include <wolfssl/wolfcrypt/curve25519.h>
+#include <wolfssl/wolfcrypt/ed25519.h>
+#include <wolfssl/wolfcrypt/ecc.h>
+#include <wolfssl/wolfcrypt/curve448.h>
+/* wolfssl/wolfcrypt/ed448.h defines enum { Ed448=0, Ed448ph=1 } which
+ * conflicts with our sign_alg.Ed448=-49.  Rename it during include. */
+#define Ed448 wc_Ed448HashType
+#include <wolfssl/wolfcrypt/ed448.h>
+#undef Ed448
+#include <wolfssl/wolfcrypt/random.h>
+#include <wolfssl/wolfcrypt/mlkem.h>
+#ifdef HAVE_ASCON
+#include <wolfssl/wolfcrypt/ascon.h>
 #endif
+#endif /* WOLFCRYPT */
 
-#ifdef TINYCRYPT
-#include <tinycrypt/aes.h>
-#include <tinycrypt/ccm_mode.h>
-#include <tinycrypt/constants.h>
-#include <tinycrypt/hmac.h>
-/* STUB U_ECC */
-#define NUM_ECC_BYTES 32
-#define uECC_Curve int
-#define uECC_secp256r1() 0
-#define uECC_decompress(a, b, c)
-#define uECC_shared_secret(a, b, c, d) 1
-#define uECC_sign(a, b, c, d, e) 1
-#define uECC_verify(a, b, c, d, e) 1
-#define uECC_make_key(a, b, c) 1
-#define uECC_word_t int
+#ifdef WOLFCRYPT
+/* Compile-time suite classification — mirrors edhoc_suite_defs.h.
+ * Guards below prevent dead ECC/Ed448/hash branches from being compiled,
+ * allowing --gc-sections to remove unreferenced wolfCrypt code. */
+#if EDHOC_CRYPTO_SUITE == 2 || EDHOC_CRYPTO_SUITE == 3 || EDHOC_CRYPTO_SUITE == 5
+#  define _SUITE_USES_P256 1
+#else
+#  define _SUITE_USES_P256 0
 #endif
-
-#ifdef MBEDTLS
-#define TRY_EXPECT_PSA(x, expected_result, key_id, err_code)                   \
-	do {                                                                   \
-		int retval = (int)(x);                                         \
-		if ((expected_result) != retval) {                             \
-			if (PSA_KEY_HANDLE_INIT != (key_id)) {                 \
-				psa_destroy_key(key_id);                       \
-			}                                                      \
-			handle_external_runtime_error(retval, __FILE__,        \
-						      __LINE__);               \
-			return err_code;                                       \
-		}                                                              \
-	} while (0)
-
-/**
- * @brief Decompresses an elliptic curve point. 
- * 
- * 
- * @param grp elliptic curve group point
- * @param input the compressed key
- * @param ilen the lenhgt if the compressed key
- * @param output the uncopressed key
- * @param olen the lenhgt of the output
- * @param osize the actual available size of the out buffer
- * @return 0 on success
- */
-static inline int mbedtls_ecp_decompress(const mbedtls_ecp_group *grp,
-					 const unsigned char *input,
-					 size_t ilen, unsigned char *output,
-					 size_t *olen, size_t osize)
-{
-	int ret;
-	size_t plen;
-	mbedtls_mpi r;
-	mbedtls_mpi x;
-	mbedtls_mpi n;
-
-	plen = mbedtls_mpi_size(&grp->P);
-
-	*olen = 2 * plen + 1;
-
-	if (osize < *olen)
-		return (MBEDTLS_ERR_ECP_BUFFER_TOO_SMALL);
-
-	// output will consist of 0x04|X|Y
-	memcpy(output + 1, input, ilen);
-	output[0] = 0x04;
-
-	mbedtls_mpi_init(&r);
-	mbedtls_mpi_init(&x);
-	mbedtls_mpi_init(&n);
-
-	// x <= input
-	MBEDTLS_MPI_CHK(mbedtls_mpi_read_binary(&x, input, plen));
-
-	// r = x^2
-	MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&r, &x, &x));
-
-	// r = x^2 + a
-	if (grp->A.p == NULL) {
-		// Special case where a is -3
-		MBEDTLS_MPI_CHK(mbedtls_mpi_sub_int(&r, &r, 3));
-	} else {
-		MBEDTLS_MPI_CHK(mbedtls_mpi_add_mpi(&r, &r, &grp->A));
-	}
-
-	// r = x^3 + ax
-	MBEDTLS_MPI_CHK(mbedtls_mpi_mul_mpi(&r, &r, &x));
-
-	// r = x^3 + ax + b
-	MBEDTLS_MPI_CHK(mbedtls_mpi_add_mpi(&r, &r, &grp->B));
-
-	// Calculate square root of r over finite field P:
-	//   r = sqrt(x^3 + ax + b) = (x^3 + ax + b) ^ ((P + 1) / 4) (mod P)
-
-	// n = P + 1
-	MBEDTLS_MPI_CHK(mbedtls_mpi_add_int(&n, &grp->P, 1));
-
-	// n = (P + 1) / 4
-	MBEDTLS_MPI_CHK(mbedtls_mpi_shift_r(&n, 2));
-
-	// r ^ ((P + 1) / 4) (mod p)
-	MBEDTLS_MPI_CHK(mbedtls_mpi_exp_mod(&r, &r, &n, &grp->P, NULL));
-
-	// Select solution that has the correct "sign" (equals odd/even solution in finite group)
-	if ((input[0] == 0x03) != mbedtls_mpi_get_bit(&r, 0)) {
-		// r = p - r
-		MBEDTLS_MPI_CHK(mbedtls_mpi_sub_mpi(&r, &grp->P, &r));
-	}
-
-	// y => output
-	ret = mbedtls_mpi_write_binary(&r, output + 1 + plen, plen);
-
-cleanup:
-	mbedtls_mpi_free(&r);
-	mbedtls_mpi_free(&x);
-	mbedtls_mpi_free(&n);
-
-	return (ret);
-}
-
+#if EDHOC_CRYPTO_SUITE == 24
+#  define _SUITE_USES_P384 1
+#else
+#  define _SUITE_USES_P384 0
 #endif
-
-#if 0
-/* Declaration of function from TinyCrypt ecc.c */
-uECC_word_t cond_set(uECC_word_t p_true, uECC_word_t p_false,
-		     unsigned int cond);
-
-/* From uECC project embedded in TinyCrypt - ecc.c
-   BSD-2-Clause license */
-static uECC_word_t uECC_vli_add(uECC_word_t *result, const uECC_word_t *left,
-				const uECC_word_t *right, wordcount_t num_words)
-{
-	uECC_word_t carry = 0U;
-	wordcount_t i;
-	for (i = 0; i < num_words; ++i) {
-		uECC_word_t sum = left[i] + right[i] + carry;
-		uECC_word_t val = (sum < left[i]);
-		carry = cond_set(val, carry, (sum != left[i]));
-		result[i] = sum;
-	}
-	return carry;
-}
-
-/* From uECC project; curve-specific.inc */
-/* Calculates EC square root of bignum (Very Large Integer) based on curve */
-static void mod_sqrt_default(uECC_word_t *a, uECC_Curve curve)
-{
-	bitcount_t i;
-	uECC_word_t p1[NUM_ECC_WORDS] = { 1 };
-	uECC_word_t l_result[NUM_ECC_WORDS] = { 1 };
-	wordcount_t num_words = curve->num_words;
-
-	/* When curve->p == 3 (mod 4), we can compute
-       sqrt(a) = a^((curve->p + 1) / 4) (mod curve->p). */
-	uECC_vli_add(p1, curve->p, p1, num_words); /* p1 = curve_p + 1 */
-	for (i = uECC_vli_numBits(p1, num_words) - 1; i > 1; --i) {
-		uECC_vli_modMult_fast(l_result, l_result, l_result, curve);
-		if (uECC_vli_testBit(p1, i)) {
-			uECC_vli_modMult_fast(l_result, l_result, a, curve);
-		}
-	}
-	uECC_vli_set(a, l_result, num_words);
-}
-
-/**
- * @brief Decompresses an elliptic curve point. 
- * 
- * 
- * @param compressed the compressed key
- * @param public_key the uncopressed key
- * @param curve elliptic curve group point
- */
-/* From uECC project 
-   BSD-2-Clause license */
-static inline void uECC_decompress(const uint8_t *compressed,
-				   uint8_t *public_key, uECC_Curve curve)
-{
-	uECC_word_t point[NUM_ECC_WORDS * 2];
-
-	uECC_word_t *y = point + curve->num_words;
-
-	uECC_vli_bytesToNative(point, compressed, curve->num_bytes);
-
-	curve->x_side(y, point, curve);
-	mod_sqrt_default(y, curve);
-
-	if ((y[0] & 0x01) != (compressed[0] == 0x03)) {
-		uECC_vli_sub(y, curve->p, y, curve->num_words);
-	}
-
-	uECC_vli_nativeToBytes(public_key, curve->num_bytes, point);
-	uECC_vli_nativeToBytes(public_key + curve->num_bytes, curve->num_bytes,
-			       y);
-}
+#if EDHOC_CRYPTO_SUITE == 25
+#  define _SUITE_USES_X448 1
+#else
+#  define _SUITE_USES_X448 0
 #endif
+#define _SUITE_USES_ECC (_SUITE_USES_P256 || _SUITE_USES_P384)
+#endif /* WOLFCRYPT */
 
 #ifdef EDHOC_MOCK_CRYPTO_WRAPPER
 static bool
@@ -273,7 +97,50 @@ aead_mock_args_match_predefined(struct edhoc_mock_aead_in_out *predefined,
 	       array_equals(&predefined->tag,
 			    &(struct byte_array){ .ptr = tag, .len = tag_len });
 }
-#endif // EDHOC_MOCK_CRYPTO_WRAPPER
+#endif /* EDHOC_MOCK_CRYPTO_WRAPPER */
+
+#if defined(WOLFCRYPT) && defined(HAVE_ASCON)
+/* HMAC using Ascon-Hash256: H(k XOR opad || H(k XOR ipad || data1 || data2)) */
+static void ascon_hmac(const uint8_t *key, word32 key_len,
+		       const uint8_t *data1, word32 data1_len,
+		       const uint8_t *data2, word32 data2_len,
+		       uint8_t *out)
+{
+	wc_AsconHash256 h;
+	uint8_t k_pad[32];
+	uint8_t i_key_pad[32];
+	uint8_t o_key_pad[32];
+	uint8_t inner[32];
+	word32 i;
+
+	memset(k_pad, 0, 32);
+	if (key_len > 32) {
+		wc_AsconHash256_Init(&h);
+		wc_AsconHash256_Update(&h, key, key_len);
+		wc_AsconHash256_Final(&h, k_pad);
+	} else {
+		memcpy(k_pad, key, key_len);
+	}
+
+	for (i = 0; i < 32; i++) {
+		i_key_pad[i] = k_pad[i] ^ 0x36;
+		o_key_pad[i] = k_pad[i] ^ 0x5c;
+	}
+
+	wc_AsconHash256_Init(&h);
+	wc_AsconHash256_Update(&h, i_key_pad, 32);
+	if (data1 && data1_len)
+		wc_AsconHash256_Update(&h, data1, data1_len);
+	if (data2 && data2_len)
+		wc_AsconHash256_Update(&h, data2, data2_len);
+	wc_AsconHash256_Final(&h, inner);
+
+	wc_AsconHash256_Init(&h);
+	wc_AsconHash256_Update(&h, o_key_pad, 32);
+	wc_AsconHash256_Update(&h, inner, 32);
+	wc_AsconHash256_Final(&h, out);
+}
+#endif /* WOLFCRYPT && HAVE_ASCON */
 
 enum err WEAK aead(enum aes_operation op, const struct byte_array *in,
 		   const struct byte_array *key, struct byte_array *nonce,
@@ -293,68 +160,141 @@ enum err WEAK aead(enum aes_operation op, const struct byte_array *in,
 			return ok;
 		}
 	}
-	// if no mocked data has been found - continue with normal aead
 #endif
 
-#if defined(TINYCRYPT)
-	struct tc_ccm_mode_struct c;
-	struct tc_aes_key_sched_struct sched;
-	TRY_EXPECT(tc_aes128_set_encrypt_key(&sched, key->ptr), 1);
-	TRY_EXPECT(tc_ccm_config(&c, &sched, nonce->ptr, nonce->len, tag->len),
-		   1);
+#ifdef WOLFCRYPT
+#if EDHOC_CRYPTO_SUITE == 0 || EDHOC_CRYPTO_SUITE == 1 || \
+    EDHOC_CRYPTO_SUITE == 2 || EDHOC_CRYPTO_SUITE == 3
+	{
+		/* AES-CCM: key=16, nonce=13, tag=8 (suite 0/2) or 16 (suite 1/3) */
+		Aes aes;
+		int r = wc_AesInit(&aes, NULL, INVALID_DEVID);
+		if (r != 0)
+			return unexpected_result_from_ext_lib;
 
-	if (op == DECRYPT) {
-		TRY_EXPECT(tc_ccm_decryption_verification(out->ptr, out->len,
-							  aad->ptr, aad->len,
-							  in->ptr, in->len, &c),
-			   1);
-
-	} else {
-		TRY_EXPECT(tc_ccm_generation_encryption(
-				   out->ptr, (out->len + tag->len), aad->ptr,
-				   aad->len, in->ptr, in->len, &c),
-			   1);
-		memcpy(tag->ptr, out->ptr + out->len, tag->len);
+		r = wc_AesCcmSetKey(&aes, key->ptr, key->len);
+		if (r != 0) {
+			wc_AesFree(&aes);
+			return unexpected_result_from_ext_lib;
+		}
+		if (op == DECRYPT) {
+			uint32_t ct_len = in->len - tag->len;
+			r = wc_AesCcmDecrypt(&aes, out->ptr, in->ptr,
+					    ct_len, nonce->ptr, nonce->len,
+					    in->ptr + ct_len, tag->len,
+					    aad->ptr, aad->len);
+			wc_AesFree(&aes);
+			if (r != 0)
+				return mac_authentication_failed;
+		} else {
+			r = wc_AesCcmEncrypt(&aes, out->ptr, in->ptr, in->len,
+					    nonce->ptr, nonce->len,
+					    tag->ptr, tag->len,
+					    aad->ptr, aad->len);
+			wc_AesFree(&aes);
+			if (r != 0)
+				return unexpected_result_from_ext_lib;
+		}
+		return ok;
 	}
-#elif defined(MBEDTLS)
-	psa_key_id_t key_id = PSA_KEY_HANDLE_INIT;
-
-	TRY_EXPECT_PSA(psa_crypto_init(), PSA_SUCCESS, key_id,
-		       unexpected_result_from_ext_lib);
-
-	psa_algorithm_t alg = PSA_ALG_AEAD_WITH_SHORTENED_TAG(
-		PSA_ALG_CCM, (uint32_t)tag->len);
-
-	psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
-	psa_set_key_usage_flags(&attr,
-				PSA_KEY_USAGE_DECRYPT | PSA_KEY_USAGE_ENCRYPT);
-	psa_set_key_algorithm(&attr, alg);
-	psa_set_key_type(&attr, PSA_KEY_TYPE_AES);
-	psa_set_key_bits(&attr, ((size_t)key->len << 3));
-	psa_set_key_lifetime(&attr, PSA_KEY_LIFETIME_VOLATILE);
-	TRY_EXPECT_PSA(psa_import_key(&attr, key->ptr, key->len, &key_id),
-		       PSA_SUCCESS, key_id, unexpected_result_from_ext_lib);
-
-	if (op == DECRYPT) {
-		size_t out_len_re = 0;
-		TRY_EXPECT_PSA(
-			psa_aead_decrypt(key_id, alg, nonce->ptr, nonce->len,
-					 aad->ptr, aad->len, in->ptr, in->len,
-					 out->ptr, out->len, &out_len_re),
-			PSA_SUCCESS, key_id, unexpected_result_from_ext_lib);
-	} else {
-		size_t out_len_re;
-		TRY_EXPECT_PSA(
-			psa_aead_encrypt(key_id, alg, nonce->ptr, nonce->len,
-					 aad->ptr, aad->len, in->ptr, in->len,
-					 out->ptr, (size_t)(in->len + tag->len),
-					 &out_len_re),
-			PSA_SUCCESS, key_id, unexpected_result_from_ext_lib);
-		memcpy(tag->ptr, out->ptr + out_len_re - tag->len, tag->len);
+#elif EDHOC_CRYPTO_SUITE == 4 || EDHOC_CRYPTO_SUITE == 5 || \
+      EDHOC_CRYPTO_SUITE == 25
+	{
+		/* ChaCha20/Poly1305: key=32, nonce=12, tag=16 */
+		if (op == DECRYPT) {
+			uint32_t ct_len =
+				in->len - CHACHA20_POLY1305_AEAD_AUTHTAG_SIZE;
+			if (wc_ChaCha20Poly1305_Decrypt(
+				    key->ptr, nonce->ptr,
+				    aad->ptr, aad->len,
+				    in->ptr, ct_len,
+				    in->ptr + ct_len, out->ptr) != 0)
+				return mac_authentication_failed;
+		} else {
+			if (wc_ChaCha20Poly1305_Encrypt(
+				    key->ptr, nonce->ptr, aad->ptr, aad->len,
+				    in->ptr, in->len, out->ptr, tag->ptr) != 0)
+				return unexpected_result_from_ext_lib;
+		}
+		return ok;
 	}
-	TRY_EXPECT(psa_destroy_key(key_id), PSA_SUCCESS);
+#elif EDHOC_CRYPTO_SUITE == 6 || EDHOC_CRYPTO_SUITE == 24
+	{
+		/* AES-GCM: key=16 (suite 6) or 32 (suite 24), nonce=12, tag=16 */
+		Aes aes;
+		int r = wc_AesInit(&aes, NULL, INVALID_DEVID);
+		if (r != 0)
+			return unexpected_result_from_ext_lib;
 
+		r = wc_AesGcmSetKey(&aes, key->ptr, key->len);
+		if (r != 0) {
+			wc_AesFree(&aes);
+			return unexpected_result_from_ext_lib;
+		}
+		if (op == DECRYPT) {
+			uint32_t ct_len = in->len - tag->len;
+			r = wc_AesGcmDecrypt(&aes, out->ptr, in->ptr, ct_len,
+					     nonce->ptr, nonce->len,
+					     in->ptr + ct_len, tag->len,
+					     aad->ptr, aad->len);
+			wc_AesFree(&aes);
+			if (r != 0)
+				return mac_authentication_failed;
+		} else {
+			r = wc_AesGcmEncrypt(&aes, out->ptr, in->ptr, in->len,
+					     nonce->ptr, nonce->len,
+					     tag->ptr, tag->len,
+					     aad->ptr, aad->len);
+			wc_AesFree(&aes);
+			if (r != 0)
+				return unexpected_result_from_ext_lib;
+		}
+		return ok;
+	}
+#elif EDHOC_CRYPTO_SUITE == 7 && defined(HAVE_ASCON)
+	{
+		/* Ascon-AEAD-128: key=16, nonce=16, tag=16 */
+		wc_AsconAEAD128 ascon;
+		int r = wc_AsconAEAD128_Init(&ascon);
+		if (r != 0)
+			return unexpected_result_from_ext_lib;
+
+		r = wc_AsconAEAD128_SetKey(&ascon, key->ptr);
+		if (r != 0)
+			return unexpected_result_from_ext_lib;
+
+		r = wc_AsconAEAD128_SetNonce(&ascon, nonce->ptr);
+		if (r != 0)
+			return unexpected_result_from_ext_lib;
+
+		r = wc_AsconAEAD128_SetAD(&ascon, aad->ptr, aad->len);
+		if (r != 0)
+			return unexpected_result_from_ext_lib;
+
+		if (op == DECRYPT) {
+			uint32_t ct_len = in->len - tag->len;
+			r = wc_AsconAEAD128_DecryptUpdate(&ascon, out->ptr,
+							 in->ptr, ct_len);
+			if (r != 0)
+				return unexpected_result_from_ext_lib;
+
+			if (wc_AsconAEAD128_DecryptFinal(&ascon,
+							 in->ptr + ct_len) != 0)
+				return mac_authentication_failed;
+		} else {
+			r = wc_AsconAEAD128_EncryptUpdate(&ascon, out->ptr,
+							 in->ptr, in->len);
+			if (r != 0)
+				return unexpected_result_from_ext_lib;
+
+			r = wc_AsconAEAD128_EncryptFinal(&ascon, tag->ptr);
+			if (r != 0)
+				return unexpected_result_from_ext_lib;
+		}
+		return ok;
+	}
 #endif
+#endif /* WOLFCRYPT */
 	return ok;
 }
 
@@ -375,7 +315,7 @@ sign_mock_args_match_predefined(struct edhoc_mock_sign_in_out *predefined,
 			    &(struct byte_array){ .len = msg_len,
 						  .ptr = (void *)msg });
 }
-#endif // EDHOC_MOCK_CRYPTO_WRAPPER
+#endif /* EDHOC_MOCK_CRYPTO_WRAPPER */
 
 enum err WEAK sign(enum sign_alg alg, const struct byte_array *sk,
 		   const struct byte_array *pk, const struct byte_array *msg,
@@ -393,73 +333,96 @@ enum err WEAK sign(enum sign_alg alg, const struct byte_array *sk,
 			return ok;
 		}
 	}
-#endif // EDHOC_MOCK_CRYPTO_WRAPPER
+#endif
 
+#ifdef COMPACT25519
 	if (alg == EdDSA) {
-#if defined(MONOCYPHER)
-                crypto_ed25519_sign(out, sk->ptr, msg->ptr, msg->len);
-                return ok;
-#elif defined(COMPACT25519)
-                edsign_sign(out, pk->ptr, sk->ptr, msg->ptr, msg->len);
-                return ok;
-#endif
-        } else if (alg == ES256) {
-#if defined(TINYCRYPT)
-
-		uECC_Curve p256 = uECC_secp256r1();
-		struct tc_sha256_state_struct ctx_sha256;
-		uint8_t hash[NUM_ECC_BYTES];
-
-		TRY_EXPECT(tc_sha256_init(&ctx_sha256), 1);
-		TRY_EXPECT(tc_sha256_update(&ctx_sha256, msg->ptr, msg->len),
-			   1);
-		TRY_EXPECT(tc_sha256_final(hash, &ctx_sha256), 1);
-
-		TRY_EXPECT(uECC_sign(sk->ptr, hash, NUM_ECC_BYTES, out, p256),
-			   TC_CRYPTO_SUCCESS);
-
+		edsign_sign(out, pk->ptr, sk->ptr, msg->ptr, msg->len);
 		return ok;
-
-#elif defined(MBEDTLS)
-		psa_algorithm_t psa_alg;
-		size_t bits;
-		psa_key_id_t key_id = PSA_KEY_HANDLE_INIT;
-
-		psa_alg = PSA_ALG_ECDSA(PSA_ALG_SHA_256);
-		bits = PSA_BYTES_TO_BITS((size_t)sk->len);
-
-		TRY_EXPECT_PSA(psa_crypto_init(), PSA_SUCCESS, key_id,
-			       unexpected_result_from_ext_lib);
-
-		psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
-		psa_set_key_usage_flags(&attributes,
-					PSA_KEY_USAGE_VERIFY_MESSAGE |
-						PSA_KEY_USAGE_VERIFY_HASH |
-						PSA_KEY_USAGE_SIGN_MESSAGE |
-						PSA_KEY_USAGE_SIGN_HASH);
-		psa_set_key_algorithm(&attributes, psa_alg);
-		psa_set_key_type(&attributes, PSA_KEY_TYPE_ECC_KEY_PAIR(
-						      PSA_ECC_FAMILY_SECP_R1));
-		psa_set_key_bits(&attributes, bits);
-		psa_set_key_lifetime(&attributes, PSA_KEY_LIFETIME_VOLATILE);
-
-		TRY_EXPECT_PSA(
-			psa_import_key(&attributes, sk->ptr, sk->len, &key_id),
-			PSA_SUCCESS, key_id, unexpected_result_from_ext_lib);
-
-		size_t signature_length;
-		TRY_EXPECT_PSA(psa_sign_message(key_id, psa_alg, msg->ptr,
-						msg->len, out, SIGNATURE_SIZE,
-						&signature_length),
-			       PSA_SUCCESS, key_id,
-			       unexpected_result_from_ext_lib);
-
-		TRY_EXPECT_PSA(signature_length, SIGNATURE_SIZE, key_id,
-			       sign_failed);
-		TRY_EXPECT(psa_destroy_key(key_id), PSA_SUCCESS);
-		return ok;
-#endif
 	}
+#endif
+
+#ifdef WOLFCRYPT
+#ifdef HAVE_ED25519_SIGN
+	if (alg == EdDSA) {
+		/* sk->ptr[0..31] = 32-byte seed; pk->ptr = 32-byte public key */
+		ed25519_key key;
+		word32 sig_len = 64;
+		wc_ed25519_init(&key);
+		wc_ed25519_import_private_key(sk->ptr, 32, pk->ptr, pk->len,
+					      &key);
+		wc_ed25519_sign_msg(msg->ptr, msg->len, out, &sig_len, &key);
+		wc_ed25519_free(&key);
+		return ok;
+	}
+#endif /* HAVE_ED25519_SIGN */
+#if _SUITE_USES_P256
+	if (alg == ES256) {
+		/* sp_ecc_sign_256 is LTO-eliminated when called indirectly through
+		 * wc_ecc_sign_hash_ex.  Declare and call it directly so the linker
+		 * sees a live reference and keeps the symbol (and its callees). */
+		extern int sp_ecc_sign_256(const byte* hash, word32 hashLen,
+		    WC_RNG* rng, const mp_int* priv, mp_int* rm, mp_int* sm,
+		    mp_int* km, void* heap);
+
+		ecc_key wc_key;
+		mp_int r, s;
+		WC_RNG rng;
+		byte hash[32];
+		wc_ecc_init(&wc_key);
+		wc_ecc_import_private_key_ex(sk->ptr, sk->len, NULL, 0,
+					     &wc_key, ECC_SECP256R1);
+		wc_Sha256Hash(msg->ptr, msg->len, hash);
+		mp_init(&r);
+		mp_init(&s);
+		wc_InitRng(&rng);
+		sp_ecc_sign_256(hash, 32, &rng, wc_key.k, &r, &s, NULL, wc_key.heap);
+		wc_FreeRng(&rng);
+		mp_to_unsigned_bin_len(&r, out, 32);
+		mp_to_unsigned_bin_len(&s, out + 32, 32);
+		mp_clear(&r);
+		mp_clear(&s);
+		wc_ecc_free(&wc_key);
+		return ok;
+	}
+#endif /* _SUITE_USES_P256 */
+#if _SUITE_USES_P384
+	if (alg == ES384) {
+		ecc_key wc_key;
+		mp_int r, s;
+		WC_RNG rng;
+		byte hash[48];
+		wc_ecc_init(&wc_key);
+		wc_ecc_import_private_key_ex(sk->ptr, sk->len, NULL, 0,
+					     &wc_key, ECC_SECP384R1);
+		wc_Sha384Hash(msg->ptr, msg->len, hash);
+		mp_init(&r);
+		mp_init(&s);
+		wc_InitRng(&rng);
+		wc_ecc_sign_hash_ex(hash, 48, &rng, &wc_key, &r, &s);
+		wc_FreeRng(&rng);
+		mp_to_unsigned_bin_len(&r, out, 48);
+		mp_to_unsigned_bin_len(&s, out + 48, 48);
+		mp_clear(&r);
+		mp_clear(&s);
+		wc_ecc_free(&wc_key);
+		return ok;
+	}
+#endif /* _SUITE_USES_P384 */
+#if _SUITE_USES_X448
+	if (alg == Ed448) {
+		ed448_key wc_key;
+		word32 sig_len = 114;
+		wc_ed448_init(&wc_key);
+		wc_ed448_import_private_key(sk->ptr, sk->len,
+					    pk->ptr, pk->len, &wc_key);
+		wc_ed448_sign_msg(msg->ptr, msg->len, out, &sig_len,
+				  &wc_key, NULL, 0);
+		wc_ed448_free(&wc_key);
+		return ok;
+	}
+#endif /* _SUITE_USES_X448 */
+#endif /* WOLFCRYPT */
 	return unsupported_ecdh_curve;
 }
 
@@ -467,221 +430,240 @@ enum err WEAK verify(enum sign_alg alg, const struct byte_array *pk,
 		     struct const_byte_array *msg, struct const_byte_array *sgn,
 		     bool *result)
 {
+#ifdef COMPACT25519
 	if (alg == EdDSA) {
-#ifdef MONOCYPHER
-int verified = crypto_ed25519_check(sgn->ptr, pk->ptr, msg->ptr, msg->len);
-*result = (verified == 0);
-return ok;
-#elif defined(COMPACT25519)
 		int verified =
 			edsign_verify(sgn->ptr, pk->ptr, msg->ptr, msg->len);
-		if (verified) {
-			*result = true;
-		} else {
-			*result = false;
-		}
+		*result = (verified != 0);
 		return ok;
-#endif
 	}
+#endif
+
+#ifdef WOLFCRYPT
+#ifdef HAVE_ED25519
+	if (alg == EdDSA) {
+		ed25519_key key;
+		int verified = 0;
+		wc_ed25519_init(&key);
+		wc_ed25519_import_public(pk->ptr, pk->len, &key);
+		wc_ed25519_verify_msg(sgn->ptr, sgn->len, msg->ptr, msg->len,
+				      &verified, &key);
+		*result = (verified == 1);
+		wc_ed25519_free(&key);
+		return ok;
+	}
+#endif /* HAVE_ED25519 */
+#if _SUITE_USES_P256
 	if (alg == ES256) {
-#if defined(MBEDTLS)
-		psa_status_t status;
-		psa_algorithm_t psa_alg;
-		size_t bits;
-		psa_key_id_t key_id = PSA_KEY_HANDLE_INIT;
-
-		psa_alg = PSA_ALG_ECDSA(PSA_ALG_SHA_256);
-		bits = PSA_BYTES_TO_BITS(P_256_PRIV_KEY_SIZE);
-
-		TRY_EXPECT_PSA(psa_crypto_init(), PSA_SUCCESS, key_id,
-			       unexpected_result_from_ext_lib);
-
-		psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
-
-		psa_set_key_usage_flags(&attributes,
-					PSA_KEY_USAGE_VERIFY_MESSAGE |
-						PSA_KEY_USAGE_VERIFY_HASH);
-		psa_set_key_algorithm(&attributes, psa_alg);
-		psa_set_key_type(&attributes, PSA_KEY_TYPE_ECC_PUBLIC_KEY(
-						      PSA_ECC_FAMILY_SECP_R1));
-		psa_set_key_bits(&attributes, bits);
-		TRY_EXPECT_PSA(
-			psa_import_key(&attributes, pk->ptr, pk->len, &key_id),
-			PSA_SUCCESS, key_id, unexpected_result_from_ext_lib);
-
-		status = psa_verify_message(key_id, psa_alg, msg->ptr, msg->len,
-					    sgn->ptr, sgn->len);
-		if (PSA_SUCCESS == status) {
-			*result = true;
-		} else {
-			*result = false;
-		}
-		TRY_EXPECT(psa_destroy_key(key_id), PSA_SUCCESS);
+		ecc_key wc_key;
+		mp_int r, s;
+		byte hash[32];
+		byte compressed[33];
+		int stat = 0;
+		compressed[0] = 0x02;
+		memcpy(compressed + 1, pk->ptr, 32);
+		wc_ecc_init(&wc_key);
+		wc_ecc_import_x963_ex(compressed, 33, &wc_key, ECC_SECP256R1);
+		wc_Sha256Hash(msg->ptr, msg->len, hash);
+		mp_init(&r);
+		mp_init(&s);
+		mp_read_unsigned_bin(&r, sgn->ptr, 32);
+		mp_read_unsigned_bin(&s, sgn->ptr + 32, 32);
+		wc_ecc_verify_hash_ex(&r, &s, hash, 32, &stat, &wc_key);
+		*result = (stat == 1);
+		mp_clear(&r);
+		mp_clear(&s);
+		wc_ecc_free(&wc_key);
 		return ok;
-#elif defined(TINYCRYPT)
-		uECC_Curve p256 = uECC_secp256r1();
-		struct tc_sha256_state_struct ctx_sha256;
-		uint8_t hash[NUM_ECC_BYTES];
-		TRY_EXPECT(tc_sha256_init(&ctx_sha256), 1);
-		TRY_EXPECT(tc_sha256_update(&ctx_sha256, msg->ptr, msg->len),
-			   1);
-		TRY_EXPECT(tc_sha256_final(hash, &ctx_sha256), 1);
-		uint8_t *pk_ptr = pk->ptr;
-		if ((P_256_PUB_KEY_UNCOMPRESSED_SIZE == pk->len) &&
-		    (0x04 == *pk->ptr)) {
-			pk_ptr++;
-		}
-		TRY_EXPECT(uECC_verify(pk_ptr, hash, NUM_ECC_BYTES, sgn->ptr,
-				       p256),
-			   1);
-		*result = true;
-		return ok;
-#endif
 	}
+#endif /* _SUITE_USES_P256 */
+#if _SUITE_USES_P384
+	if (alg == ES384) {
+		ecc_key wc_key;
+		mp_int r, s;
+		byte hash[48];
+		byte compressed[49];
+		int stat = 0;
+		compressed[0] = 0x02;
+		memcpy(compressed + 1, pk->ptr, 48);
+		wc_ecc_init(&wc_key);
+		wc_ecc_import_x963_ex(compressed, 49, &wc_key, ECC_SECP384R1);
+		wc_Sha384Hash(msg->ptr, msg->len, hash);
+		mp_init(&r);
+		mp_init(&s);
+		mp_read_unsigned_bin(&r, sgn->ptr, 48);
+		mp_read_unsigned_bin(&s, sgn->ptr + 48, 48);
+		wc_ecc_verify_hash_ex(&r, &s, hash, 48, &stat, &wc_key);
+		*result = (stat == 1);
+		mp_clear(&r);
+		mp_clear(&s);
+		wc_ecc_free(&wc_key);
+		return ok;
+	}
+#endif /* _SUITE_USES_P384 */
+#if _SUITE_USES_X448
+	if (alg == Ed448) {
+		ed448_key wc_key;
+		int verified = 0;
+		wc_ed448_init(&wc_key);
+		wc_ed448_import_public(pk->ptr, pk->len, &wc_key);
+		wc_ed448_verify_msg(sgn->ptr, sgn->len,
+				    msg->ptr, msg->len,
+				    &verified, &wc_key, NULL, 0);
+		*result = (verified == 1);
+		wc_ed448_free(&wc_key);
+		return ok;
+	}
+#endif /* _SUITE_USES_X448 */
+#endif /* WOLFCRYPT */
 	return crypto_operation_not_implemented;
 }
 
 enum err WEAK hkdf_extract(enum hash_alg alg, const struct byte_array *salt,
 			   struct byte_array *ikm, uint8_t *out)
 {
-	/*"Note that [RFC5869] specifies that if the salt is not provided, 
-	it is set to a string of zeros.  For implementation purposes, 
-	not providing the salt is the same as setting the salt to the empty byte 
-	string. OSCORE sets the salt default value to empty byte string, which 
+	/*"Note that [RFC5869] specifies that if the salt is not provided,
+	it is set to a string of zeros.  For implementation purposes,
+	not providing the salt is the same as setting the salt to the empty byte
+	string. OSCORE sets the salt default value to empty byte string, which
 	is converted to a string of zeroes (see Section 2.2 of [RFC5869])".*/
 
-	/*all currently prosed suites use hmac-sha256*/
-	if (alg != SHA_256) {
-		return crypto_operation_not_implemented;
-	}
-#ifdef TINYCRYPT
-	struct tc_hmac_state_struct h;
-	memset(&h, 0x00, sizeof(h));
-	if (salt->ptr == NULL || salt->len == 0) {
+#ifdef WOLFCRYPT
+	if (alg == SHA_256) {
 		uint8_t zero_salt[32] = { 0 };
-		TRY_EXPECT(tc_hmac_set_key(&h, zero_salt, 32), 1);
-	} else {
-		TRY_EXPECT(tc_hmac_set_key(&h, salt->ptr, salt->len), 1);
+		const uint8_t *s =
+			(salt->ptr && salt->len) ? salt->ptr : zero_salt;
+		word32 s_len = (salt->ptr && salt->len) ?
+				       (word32)salt->len : 32;
+		if (wc_HKDF_Extract(WC_SHA256, s, s_len,
+				    ikm->ptr, ikm->len, out) != 0)
+			return hkdf_failed;
+		return ok;
 	}
-	TRY_EXPECT(tc_hmac_init(&h), 1);
-	TRY_EXPECT(tc_hmac_update(&h, ikm->ptr, ikm->len), 1);
-	TRY_EXPECT(tc_hmac_final(out, TC_SHA256_DIGEST_SIZE, &h), 1);
-#endif
-#ifdef MBEDTLS
-	psa_algorithm_t psa_alg = PSA_ALG_HMAC(PSA_ALG_SHA_256);
-	psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
-	psa_key_id_t key_id = PSA_KEY_HANDLE_INIT;
-
-	TRY_EXPECT_PSA(psa_crypto_init(), PSA_SUCCESS, key_id,
-		       unexpected_result_from_ext_lib);
-
-	psa_set_key_lifetime(&attr, PSA_KEY_LIFETIME_VOLATILE);
-	psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_SIGN_HASH);
-	psa_set_key_algorithm(&attr, psa_alg);
-	psa_set_key_type(&attr, PSA_KEY_TYPE_HMAC);
-
-	if (salt->ptr && salt->len) {
-		TRY_EXPECT_PSA(
-			psa_import_key(&attr, salt->ptr, salt->len, &key_id),
-			PSA_SUCCESS, key_id, unexpected_result_from_ext_lib);
-	} else {
+#if EDHOC_CRYPTO_SUITE == 24
+	if (alg == SHA_384) {
+		uint8_t zero_salt[48] = { 0 };
+		const uint8_t *s =
+			(salt->ptr && salt->len) ? salt->ptr : zero_salt;
+		word32 s_len = (salt->ptr && salt->len) ?
+				       (word32)salt->len : 48;
+		if (wc_HKDF_Extract(WC_SHA384, s, s_len,
+				    ikm->ptr, ikm->len, out) != 0)
+			return hkdf_failed;
+		return ok;
+	}
+#endif /* EDHOC_CRYPTO_SUITE == 24 */
+#if EDHOC_CRYPTO_SUITE == 25
+	if (alg == SHAKE_256) {
+		/* HMAC-SHA3-256 approximation for HMAC-SHAKE-256 */
+		Hmac hmac;
 		uint8_t zero_salt[32] = { 0 };
-
-		TRY_EXPECT_PSA(psa_import_key(&attr, zero_salt, 32, &key_id),
-			       PSA_SUCCESS, key_id,
-			       unexpected_result_from_ext_lib);
+		const uint8_t *s =
+			(salt->ptr && salt->len) ? salt->ptr : zero_salt;
+		word32 s_len = (salt->ptr && salt->len) ?
+				       (word32)salt->len : 32;
+		wc_HmacSetKey(&hmac, WC_SHA3_256, s, s_len);
+		wc_HmacUpdate(&hmac, ikm->ptr, ikm->len);
+		wc_HmacFinal(&hmac, out);
+		wc_HmacFree(&hmac);
+		return ok;
 	}
-	size_t out_len;
-	TRY_EXPECT_PSA(psa_mac_compute(key_id, psa_alg, ikm->ptr, ikm->len, out,
-				       32, &out_len),
-		       PSA_SUCCESS, key_id, unexpected_result_from_ext_lib);
-
-	TRY_EXPECT(psa_destroy_key(key_id), PSA_SUCCESS);
-#endif
-	return ok;
+#endif /* EDHOC_CRYPTO_SUITE == 25 */
+#ifdef HAVE_ASCON
+	if (alg == ASCON_HASH256) {
+		/* HKDF-Extract: PRK = HMAC-Ascon(salt, IKM) */
+		uint8_t zero_salt[32] = { 0 };
+		const uint8_t *s =
+			(salt->ptr && salt->len) ? salt->ptr : zero_salt;
+		word32 s_len = (salt->ptr && salt->len) ?
+				       (word32)salt->len : 32;
+		ascon_hmac(s, s_len, ikm->ptr, ikm->len, NULL, 0, out);
+		return ok;
+	}
+#endif /* HAVE_ASCON */
+#endif /* WOLFCRYPT */
+	return crypto_operation_not_implemented;
 }
 
 enum err WEAK hkdf_expand(enum hash_alg alg, const struct byte_array *prk,
 			  const struct byte_array *info, struct byte_array *out)
 {
-	if (alg != SHA_256) {
-		return crypto_operation_not_implemented;
+#ifdef WOLFCRYPT
+	if (alg == SHA_256) {
+		if (wc_HKDF_Expand(WC_SHA256, prk->ptr, prk->len,
+				   info->ptr, info->len,
+				   out->ptr, out->len) != 0)
+			return hkdf_failed;
+		return ok;
 	}
-	/* "N = ceil(L/HashLen)" */
-	uint32_t iterations = (out->len + 31) / 32;
-	/* "L length of output keying material in octets (<= 255*HashLen)"*/
-	if (iterations > 255) {
-		return hkdf_failed;
+#if EDHOC_CRYPTO_SUITE == 24
+	if (alg == SHA_384) {
+		if (wc_HKDF_Expand(WC_SHA384, prk->ptr, prk->len,
+				   info->ptr, info->len,
+				   out->ptr, out->len) != 0)
+			return hkdf_failed;
+		return ok;
 	}
-
-#ifdef TINYCRYPT
-	uint8_t t[32] = { 0 };
-	struct tc_hmac_state_struct h;
-	for (uint8_t i = 1; i <= iterations; i++) {
-		memset(&h, 0x00, sizeof(h));
-		TRY_EXPECT(tc_hmac_set_key(&h, prk->ptr, prk->len), 1);
-		tc_hmac_init(&h);
-		if (i > 1) {
-			TRY_EXPECT(tc_hmac_update(&h, t, 32), 1);
+#endif /* EDHOC_CRYPTO_SUITE == 24 */
+#if EDHOC_CRYPTO_SUITE == 25
+	if (alg == SHAKE_256) {
+		/* HMAC-SHA3-256 approximation: manual HKDF-Expand loop */
+		uint32_t hash_len = 32;
+		uint32_t iterations = (out->len + hash_len - 1) / hash_len;
+		if (iterations > 255)
+			return hkdf_failed;
+		uint8_t t[32] = { 0 };
+		Hmac hmac;
+		for (uint8_t i = 1; i <= iterations; i++) {
+			wc_HmacSetKey(&hmac, WC_SHA3_256,
+				      prk->ptr, prk->len);
+			if (i > 1)
+				wc_HmacUpdate(&hmac, t, hash_len);
+			wc_HmacUpdate(&hmac, info->ptr, info->len);
+			wc_HmacUpdate(&hmac, &i, 1);
+			wc_HmacFinal(&hmac, t);
+			wc_HmacFree(&hmac);
+			uint32_t copy = (out->len < (uint32_t)i * hash_len) ?
+					(out->len % hash_len) : hash_len;
+			memcpy(&out->ptr[(i - 1) * hash_len], t, copy);
 		}
-		TRY_EXPECT(tc_hmac_update(&h, info->ptr, info->len), 1);
-		TRY_EXPECT(tc_hmac_update(&h, &i, 1), 1);
-		TRY_EXPECT(tc_hmac_final(t, TC_SHA256_DIGEST_SIZE, &h), 1);
-		if (out->len < i * 32) {
-			memcpy(&out->ptr[(i - 1) * 32], t, out->len % 32);
-		} else {
-			memcpy(&out->ptr[(i - 1) * 32], t, 32);
-		}
+		return ok;
 	}
-#endif
-#ifdef MBEDTLS
-	psa_status_t status;
-	psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
-	psa_key_id_t key_id = PSA_KEY_HANDLE_INIT;
-	PRINTF("key_id: %d\n", key_id);
-
-	TRY_EXPECT_PSA(psa_crypto_init(), PSA_SUCCESS, key_id,
-		       unexpected_result_from_ext_lib);
-	psa_set_key_lifetime(&attr, PSA_KEY_LIFETIME_VOLATILE);
-	psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_SIGN_HASH);
-	psa_set_key_algorithm(&attr, PSA_ALG_HMAC(PSA_ALG_SHA_256));
-	psa_set_key_type(&attr, PSA_KEY_TYPE_HMAC);
-
-	PRINT_ARRAY("PRK:", prk->ptr, prk->len);
-	TRY_EXPECT_PSA(psa_import_key(&attr, prk->ptr, prk->len, &key_id),
-		       PSA_SUCCESS, key_id, unexpected_result_from_ext_lib);
-
-	size_t combo_len = (32 + (size_t)info->len + 1);
-
-	TRY_EXPECT_PSA(check_buffer_size(INFO_MAX_SIZE + 32 + 1,
-					 (uint32_t)combo_len),
-		       ok, key_id, unexpected_result_from_ext_lib);
-
-	uint8_t combo[INFO_MAX_SIZE + 32 + 1];
-	uint8_t tmp_out[32];
-	memset(tmp_out, 0, 32);
-	memcpy(combo + 32, info->ptr, info->len);
-	size_t offset = 32;
-	for (uint32_t i = 1; i <= iterations; i++) {
-		memcpy(combo, tmp_out, 32);
-		combo[combo_len - 1] = (uint8_t)i;
-		size_t tmp_out_len;
-		status = psa_mac_compute(key_id, PSA_ALG_HMAC(PSA_ALG_SHA_256),
-					 combo + offset, combo_len - offset,
-					 tmp_out, 32, &tmp_out_len);
-		TRY_EXPECT_PSA(status, PSA_SUCCESS, key_id,
-			       unexpected_result_from_ext_lib);
-		offset = 0;
-		uint8_t *dest = out->ptr + ((i - 1) << 5);
-		if (out->len < (uint32_t)(i << 5)) {
-			memcpy(dest, tmp_out, out->len & 31);
-		} else {
-			memcpy(dest, tmp_out, 32);
+#endif /* EDHOC_CRYPTO_SUITE == 25 */
+#ifdef HAVE_ASCON
+	if (alg == ASCON_HASH256) {
+		/* Manual HKDF-Expand with HMAC-Ascon (hash_len=32) */
+		uint32_t hash_len = 32;
+		uint32_t iterations = (out->len + hash_len - 1) / hash_len;
+		if (iterations > 255)
+			return hkdf_failed;
+		uint8_t t[32] = { 0 };
+		/* concat buffer: T(i-1)[32] + info[?] + counter[1] — max 288 bytes */
+		uint8_t concat[32 + 256 + 1];
+		for (uint8_t i = 1; i <= iterations; i++) {
+			word32 concat_len = 0;
+			if (i > 1) {
+				memcpy(concat, t, 32);
+				concat_len += 32;
+			}
+			if (info->len <= 256) {
+				memcpy(concat + concat_len, info->ptr, info->len);
+				concat_len += info->len;
+			}
+			concat[concat_len++] = i;
+			ascon_hmac(prk->ptr, prk->len,
+				   concat, concat_len, NULL, 0, t);
+			uint32_t copy = (out->len < (uint32_t)i * hash_len) ?
+					(out->len % hash_len) : hash_len;
+			if (copy == 0)
+				copy = hash_len;
+			memcpy(&out->ptr[(i - 1) * hash_len], t, copy);
 		}
+		return ok;
 	}
-	TRY_EXPECT(psa_destroy_key(key_id), PSA_SUCCESS);
-#endif
-	return ok;
+#endif /* HAVE_ASCON */
+#endif /* WOLFCRYPT */
+	return crypto_operation_not_implemented;
 }
 
 enum err WEAK hkdf_sha_256(struct byte_array *master_secret,
@@ -699,175 +681,461 @@ enum err WEAK shared_secret_derive(enum ecdh_alg alg,
 				   const struct byte_array *pk,
 				   uint8_t *shared_secret)
 {
+#ifdef COMPACT25519
 	if (alg == X25519) {
-#if defined(MONOCYPHER)
-                crypto_x25519(shared_secret, sk->ptr, pk->ptr);
-                return ok;
-#elif defined(COMPACT25519)
-                uint8_t e[F25519_SIZE];
-                f25519_copy(e, sk->ptr);
-                c25519_prepare(e);
-                c25519_smult(shared_secret, pk->ptr, e);
-                return ok;
-#endif
-        }
-	if (alg == P256) {
-#if defined(TINYCRYPT)
-		uECC_Curve p256 = uECC_secp256r1();
-		uint8_t pk_decompressed[P_256_PUB_KEY_UNCOMPRESSED_SIZE];
-
-		uECC_decompress(pk->ptr, pk_decompressed, p256);
-
-		PRINT_ARRAY("pk_decompressed", pk_decompressed,
-			    2 * P_256_PUB_KEY_X_CORD_SIZE);
-
-		TRY_EXPECT(uECC_shared_secret(pk_decompressed, sk->ptr,
-					      shared_secret, p256),
-			   1);
-
+		uint8_t e[F25519_SIZE];
+		f25519_copy(e, sk->ptr);
+		c25519_prepare(e);
+		c25519_smult(shared_secret, pk->ptr, e);
 		return ok;
-#elif defined(MBEDTLS) /* TINYCRYPT / MBEDTLS */
-		psa_key_id_t key_id = PSA_KEY_HANDLE_INIT;
-		psa_algorithm_t psa_alg;
-		size_t bits;
-		psa_status_t result = ok;
-
-		psa_alg = PSA_ALG_ECDH;
-		bits = PSA_BYTES_TO_BITS(sk->len);
-
-		TRY_EXPECT_PSA(psa_crypto_init(), PSA_SUCCESS, key_id,
-			       unexpected_result_from_ext_lib);
-
-		psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
-		psa_set_key_lifetime(&attr, PSA_KEY_LIFETIME_VOLATILE);
-		psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_DERIVE);
-		psa_set_key_algorithm(&attr, psa_alg);
-		psa_set_key_type(&attr, PSA_KEY_TYPE_ECC_KEY_PAIR(
-						PSA_ECC_FAMILY_SECP_R1));
-
-		TRY_EXPECT_PSA(psa_import_key(&attr, sk->ptr, (size_t)sk->len,
-					      &key_id),
-			       PSA_SUCCESS, key_id,
-			       unexpected_result_from_ext_lib);
-		psa_key_type_t type = psa_get_key_type(&attr);
-		size_t shared_size =
-			PSA_RAW_KEY_AGREEMENT_OUTPUT_SIZE(type, bits);
-
-		size_t shared_secret_len = 0;
-
-		size_t pk_decompressed_len;
-		uint8_t pk_decompressed[P_256_PUB_KEY_UNCOMPRESSED_SIZE];
-
-		mbedtls_pk_context ctx_verify = { 0 };
-		mbedtls_pk_init(&ctx_verify);
-		if (PSA_SUCCESS !=
-		    mbedtls_pk_setup(&ctx_verify, mbedtls_pk_info_from_type(
-							  MBEDTLS_PK_ECKEY))) {
-			result = unexpected_result_from_ext_lib;
-			goto cleanup;
-		}
-		if (PSA_SUCCESS !=
-		    mbedtls_ecp_group_load(&mbedtls_pk_ec(ctx_verify)->grp,
-					   MBEDTLS_ECP_DP_SECP256R1)) {
-			result = unexpected_result_from_ext_lib;
-			goto cleanup;
-		}
-		if (PSA_SUCCESS !=
-		    mbedtls_ecp_decompress(&mbedtls_pk_ec(ctx_verify)->grp,
-					   pk->ptr, pk->len, pk_decompressed,
-					   &pk_decompressed_len,
-					   sizeof(pk_decompressed))) {
-			result = unexpected_result_from_ext_lib;
-			goto cleanup;
-		}
-
-		PRINT_ARRAY("pk_decompressed", pk_decompressed,
-			    (uint32_t)pk_decompressed_len);
-
-		if (PSA_SUCCESS !=
-		    psa_raw_key_agreement(PSA_ALG_ECDH, key_id, pk_decompressed,
-					  pk_decompressed_len, shared_secret,
-					  shared_size, &shared_secret_len)) {
-			result = unexpected_result_from_ext_lib;
-			goto cleanup;
-		}
-	cleanup:
-		if (PSA_KEY_HANDLE_INIT != key_id) {
-			TRY_EXPECT(psa_destroy_key(key_id), PSA_SUCCESS);
-		}
-		mbedtls_pk_free(&ctx_verify);
-		return result;
-#endif
 	}
+#endif
+
+#ifdef WOLFCRYPT
+#ifdef HAVE_CURVE25519
+	if (alg == X25519) {
+		curve25519_key priv_key, pub_key;
+		word32 secret_len = 32;
+		wc_curve25519_init(&priv_key);
+		wc_curve25519_init(&pub_key);
+		wc_curve25519_import_private_ex(sk->ptr, sk->len, &priv_key,
+						EC25519_LITTLE_ENDIAN);
+		wc_curve25519_import_public_ex(pk->ptr, pk->len, &pub_key,
+					       EC25519_LITTLE_ENDIAN);
+		wc_curve25519_shared_secret_ex(&priv_key, &pub_key,
+					       shared_secret, &secret_len,
+					       EC25519_LITTLE_ENDIAN);
+		wc_curve25519_free(&priv_key);
+		wc_curve25519_free(&pub_key);
+		return ok;
+	}
+#endif /* HAVE_CURVE25519 */
+#if _SUITE_USES_P256
+	if (alg == P256) {
+		ecc_key priv_key, pub_key;
+		byte compressed[33];
+		word32 secret_len = 32;
+		WC_RNG rng;
+		compressed[0] = 0x02;
+		memcpy(compressed + 1, pk->ptr, 32);
+		wc_ecc_init(&priv_key);
+		wc_ecc_init(&pub_key);
+		wc_InitRng(&rng);
+		wc_ecc_set_rng(&priv_key, &rng);
+		wc_ecc_import_private_key_ex(sk->ptr, sk->len, NULL, 0,
+					     &priv_key, ECC_SECP256R1);
+		wc_ecc_import_x963_ex(compressed, 33, &pub_key, ECC_SECP256R1);
+		wc_ecc_shared_secret(&priv_key, &pub_key,
+				     shared_secret, &secret_len);
+		wc_FreeRng(&rng);
+		wc_ecc_free(&priv_key);
+		wc_ecc_free(&pub_key);
+		return ok;
+	}
+#endif /* _SUITE_USES_P256 */
+#if _SUITE_USES_P384
+	if (alg == P384) {
+		ecc_key priv_key, pub_key;
+		byte compressed[49];
+		word32 secret_len = 48;
+		WC_RNG rng;
+		compressed[0] = 0x02;
+		memcpy(compressed + 1, pk->ptr, 48);
+		wc_ecc_init(&priv_key);
+		wc_ecc_init(&pub_key);
+		wc_InitRng(&rng);
+		wc_ecc_set_rng(&priv_key, &rng);
+		wc_ecc_import_private_key_ex(sk->ptr, sk->len, NULL, 0,
+					     &priv_key, ECC_SECP384R1);
+		wc_ecc_import_x963_ex(compressed, 49, &pub_key, ECC_SECP384R1);
+		wc_ecc_shared_secret(&priv_key, &pub_key,
+				     shared_secret, &secret_len);
+		wc_FreeRng(&rng);
+		wc_ecc_free(&priv_key);
+		wc_ecc_free(&pub_key);
+		return ok;
+	}
+#endif /* _SUITE_USES_P384 */
+#if _SUITE_USES_X448
+	if (alg == X448) {
+		curve448_key priv_key, pub_key;
+		word32 secret_len = 56;
+		wc_curve448_init(&priv_key);
+		wc_curve448_init(&pub_key);
+		wc_curve448_import_private_ex(sk->ptr, sk->len, &priv_key,
+					      EC448_LITTLE_ENDIAN);
+		wc_curve448_import_public_ex(pk->ptr, pk->len, &pub_key,
+					     EC448_LITTLE_ENDIAN);
+		wc_curve448_shared_secret_ex(&priv_key, &pub_key,
+					     shared_secret, &secret_len,
+					     EC448_LITTLE_ENDIAN);
+		wc_curve448_free(&priv_key);
+		wc_curve448_free(&pub_key);
+		return ok;
+	}
+#endif /* _SUITE_USES_X448 */
+#endif /* WOLFCRYPT */
 	return crypto_operation_not_implemented;
 }
 
 enum err WEAK ephemeral_dh_key_gen(enum ecdh_alg alg, uint32_t seed,
 				   struct byte_array *sk, struct byte_array *pk)
 {
+	(void)seed; /* seed no longer used — callers pre-fill sk->ptr */
+
 	if (alg == X25519) {
+		/* sk->ptr pre-filled with 32 bytes of CSPRNG output; apply clamping */
+		sk->ptr[0] &= 0xf8;
+		sk->ptr[31] &= 0x7f;
+		sk->ptr[31] |= 0x40;
 #ifdef COMPACT25519
-		uint8_t extended_seed[32];
-#if defined(TINYCRYPT)
-		struct tc_sha256_state_struct s;
-		TRY_EXPECT(tc_sha256_init(&s), 1);
-		TRY_EXPECT(tc_sha256_update(&s, (uint8_t *)&seed, sizeof(seed)),
-			   1);
-		TRY_EXPECT(tc_sha256_final(extended_seed, &s),
-			   TC_CRYPTO_SUCCESS);
-#elif defined(MBEDTLS) /* TINYCRYPT / MBEDTLS */
-		size_t length;
-		TRY_EXPECT(psa_hash_compute(PSA_ALG_SHA_256, (uint8_t *)&seed,
-					    sizeof(seed), sk->ptr, HASH_SIZE,
-					    &length),
-			   0);
-		if (length != 32) {
-			return sha_failed;
+		c25519_smult(pk->ptr, c25519_base_x, sk->ptr);
+		pk->len = 32;
+		sk->len = 32;
+		return ok;
+#elif defined(WOLFCRYPT) && defined(HAVE_CURVE25519)
+		{
+			curve25519_key key;
+			word32 pk_len = 32;
+			wc_curve25519_init(&key);
+			wc_curve25519_import_private_ex(sk->ptr, 32, &key,
+							EC25519_LITTLE_ENDIAN);
+			wc_curve25519_export_public_ex(&key, pk->ptr, &pk_len,
+						       EC25519_LITTLE_ENDIAN);
+			pk->len = (uint32_t)pk_len;
+			sk->len = 32;
+			wc_curve25519_free(&key);
+			return ok;
 		}
-#endif
-#if defined(MONOCYPHER)
-                memcpy(sk->ptr, extended_seed, 32);
-                sk->ptr[0] &= 0xf8;
-                sk->ptr[31] &= 0x7f;
-                sk->ptr[31] |= 0x40;
-                crypto_x25519_public_key(pk->ptr, sk->ptr);
 #else
-                compact_x25519_keygen(sk->ptr, pk->ptr, extended_seed);
-#endif
-                pk->len = X25519_KEY_SIZE;
-                sk->len = X25519_KEY_SIZE;
-#endif
-	} else if (alg == P256) return crypto_operation_not_implemented; else {
 		return unsupported_ecdh_curve;
+#endif
 	}
+
+#if defined(WOLFCRYPT) && _SUITE_USES_P256
+	if (alg == P256) {
+		ecc_key key;
+		byte pub33[33];
+		word32 pub_len = sizeof(pub33);
+		word32 sk_len = 32;
+		/* sk->ptr is pre-filled with 32 bytes of CSPRNG output by the caller.
+		 * wc_ecc_make_key_ex is avoided: sp_ecc_make_key_256 is dead-code-
+		 * eliminated by LTO, falling back to the heap-alloc generic path which
+		 * fails on bare-metal.  Instead, import the private key and derive the
+		 * public key via wc_ecc_make_pub, which uses sp_ecc_mulmod_base_256. */
+		wc_ecc_init(&key);
+		wc_ecc_import_private_key_ex(sk->ptr, 32, NULL, 0, &key, ECC_SECP256R1);
+		wc_ecc_make_pub(&key, NULL);
+		wc_ecc_export_private_only(&key, sk->ptr, &sk_len);
+		sk->len = (uint32_t)sk_len;
+		wc_ecc_export_x963_ex(&key, pub33, &pub_len, 1);
+		memcpy(pk->ptr, pub33 + 1, 32);
+		pk->len = 32;
+		wc_ecc_free(&key);
+		return ok;
+	}
+#endif /* WOLFCRYPT && _SUITE_USES_P256 */
+#if defined(WOLFCRYPT) && _SUITE_USES_P384
+	if (alg == P384) {
+		WC_RNG rng;
+		ecc_key key;
+		byte pub97[97];
+		word32 pub_len = sizeof(pub97);
+		word32 sk_len = 48;
+		wc_ecc_init(&key);
+		wc_InitRng(&rng);
+		wc_ecc_make_key_ex(&rng, 48, &key, ECC_SECP384R1);
+		wc_FreeRng(&rng);
+		wc_ecc_export_private_only(&key, sk->ptr, &sk_len);
+		sk->len = (uint32_t)sk_len;
+		wc_ecc_export_x963(&key, pub97, &pub_len);
+		memcpy(pk->ptr, pub97 + 1, 48);
+		pk->len = 48;
+		wc_ecc_free(&key);
+		return ok;
+	}
+#endif /* WOLFCRYPT && _SUITE_USES_P384 */
+#if defined(WOLFCRYPT) && _SUITE_USES_X448
+	if (alg == X448) {
+		WC_RNG rng;
+		curve448_key key;
+		word32 sk_len = 56, pk_len = 56;
+		wc_curve448_init(&key);
+		wc_InitRng(&rng);
+		wc_curve448_make_key(&rng, 56, &key);
+		wc_FreeRng(&rng);
+		wc_curve448_export_private_raw_ex(&key, sk->ptr, &sk_len,
+						  EC448_LITTLE_ENDIAN);
+		sk->len = (uint32_t)sk_len;
+		wc_curve448_export_public_ex(&key, pk->ptr, &pk_len,
+					     EC448_LITTLE_ENDIAN);
+		pk->len = (uint32_t)pk_len;
+		wc_curve448_free(&key);
+		return ok;
+	}
+#endif /* WOLFCRYPT && _SUITE_USES_X448 */
+	return unsupported_ecdh_curve;
+}
+
+enum err WEAK sign_key_gen(enum sign_alg alg, const uint8_t *seed,
+			   struct byte_array *sk, struct byte_array *pk)
+{
+#ifdef COMPACT25519
+	if (alg == EdDSA) {
+		edsign_seckey_expand(sk->ptr, seed);
+		edsign_public_key(pk->ptr, sk->ptr);
+		sk->len = 64;
+		pk->len = 32;
+		return ok;
+	}
+#endif
+
+#ifdef WOLFCRYPT
+#ifdef HAVE_ED25519
+	if (alg == EdDSA) {
+		/* Store seed in sk[0..31], public key in sk[32..63] (64-byte buf) */
+		ed25519_key key;
+		word32 pk_len = 32;
+		int ret;
+		wc_ed25519_init(&key);
+		ret = wc_ed25519_import_private_only(seed, 32, &key);
+		if (ret != 0) {
+			wc_ed25519_free(&key);
+			return sign_failed;
+		}
+		ret = wc_ed25519_make_public(&key, pk->ptr, pk_len);
+		if (ret != 0) {
+			wc_ed25519_free(&key);
+			return sign_failed;
+		}
+		memcpy(sk->ptr, seed, 32);
+		memcpy(sk->ptr + 32, pk->ptr, 32);
+		sk->len = 64;
+		pk->len = 32;
+		wc_ed25519_free(&key);
+		return ok;
+	}
+#endif /* HAVE_ED25519 */
+#if _SUITE_USES_P256
+	if (alg == ES256) {
+		ecc_key key;
+		byte pub33[33];
+		word32 pub_len = sizeof(pub33);
+		word32 sk_len = 32;
+		wc_ecc_init(&key);
+		wc_ecc_import_private_key_ex(seed, 32, NULL, 0,
+					     &key, ECC_SECP256R1);
+		wc_ecc_make_pub(&key, NULL);
+		wc_ecc_export_x963_ex(&key, pub33, &pub_len, 1);
+		/* RFC 9528 §3.7: CRED uses y=false (even Y, prefix 0x02).
+		 * If Y is odd (prefix 0x03), negate the private scalar: new_sk = n - sk.
+		 * The negated key has the same X but even Y, keeping y=false valid. */
+		if (pub33[0] == 0x03) {
+			/* P-256 order n */
+			static const byte p256n[32] = {
+				0xFF,0xFF,0xFF,0xFF,0x00,0x00,0x00,0x00,
+				0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+				0xBC,0xE6,0xFA,0xAD,0xA7,0x17,0x9E,0x84,
+				0xF3,0xB9,0xCA,0xC2,0xFC,0x63,0x25,0x51
+			};
+			mp_int order, neg;
+			mp_init(&order);
+			mp_init(&neg);
+			mp_read_unsigned_bin(&order, p256n, 32);
+			mp_sub(&order, &key.k[0], &neg);
+			mp_copy(&neg, &key.k[0]);
+			mp_clear(&order);
+			mp_clear(&neg);
+			/* Recompute public key from negated private key */
+			wc_ecc_make_pub(&key, NULL);
+			pub_len = sizeof(pub33);
+			wc_ecc_export_x963_ex(&key, pub33, &pub_len, 1);
+		}
+		wc_ecc_export_private_only(&key, sk->ptr, &sk_len);
+		sk->len = (uint32_t)sk_len;
+		memcpy(pk->ptr, pub33 + 1, 32);
+		pk->len = 32;
+		wc_ecc_free(&key);
+		return ok;
+	}
+#endif /* _SUITE_USES_P256 */
+#if _SUITE_USES_P384
+	if (alg == ES384) {
+		ecc_key key;
+		byte pub97[97];
+		word32 pub_len = sizeof(pub97);
+		word32 sk_len = 48;
+		wc_ecc_init(&key);
+		wc_ecc_import_private_key_ex(seed, 48, NULL, 0,
+					     &key, ECC_SECP384R1);
+		wc_ecc_make_pub(&key, NULL);
+		wc_ecc_export_private_only(&key, sk->ptr, &sk_len);
+		sk->len = (uint32_t)sk_len;
+		wc_ecc_export_x963(&key, pub97, &pub_len);
+		memcpy(pk->ptr, pub97 + 1, 48);
+		pk->len = 48;
+		wc_ecc_free(&key);
+		return ok;
+	}
+#endif /* _SUITE_USES_P384 */
+#if _SUITE_USES_X448
+	if (alg == Ed448) {
+		ed448_key key;
+		word32 pk_len = 57;
+		wc_ed448_init(&key);
+		wc_ed448_import_private_only(seed, 57, &key);
+		wc_ed448_make_public(&key, pk->ptr, pk_len);
+		memcpy(sk->ptr, seed, 57);
+		sk->len = 57;
+		pk->len = (uint32_t)pk_len;
+		wc_ed448_free(&key);
+		return ok;
+	}
+#endif /* _SUITE_USES_X448 */
+#endif /* WOLFCRYPT */
+	return crypto_operation_not_implemented;
+}
+
+enum err WEAK x25519_public_from_private(const struct byte_array *sk,
+					  struct byte_array *pk)
+{
+#ifdef COMPACT25519
+	uint8_t e[32];
+	f25519_copy(e, sk->ptr);
+	c25519_prepare(e);
+	c25519_smult(pk->ptr, c25519_base_x, e);
+	pk->len = 32;
 	return ok;
+#elif defined(WOLFCRYPT) && defined(HAVE_CURVE25519)
+	{
+		curve25519_key key;
+		word32 pk_len = 32;
+		wc_curve25519_init(&key);
+		wc_curve25519_import_private_ex(sk->ptr, sk->len, &key,
+						EC25519_LITTLE_ENDIAN);
+		wc_curve25519_export_public_ex(&key, pk->ptr, &pk_len,
+					       EC25519_LITTLE_ENDIAN);
+		pk->len = (uint32_t)pk_len;
+		wc_curve25519_free(&key);
+		return ok;
+	}
+#else
+	return crypto_operation_not_implemented;
+#endif
 }
 
 enum err WEAK hash(enum hash_alg alg, const struct byte_array *in,
 		   struct byte_array *out)
 {
+#ifdef WOLFCRYPT
 	if (alg == SHA_256) {
-#ifdef TINYCRYPT
-		struct tc_sha256_state_struct s;
-		TRY_EXPECT(tc_sha256_init(&s), 1);
-		TRY_EXPECT(tc_sha256_update(&s, in->ptr, in->len), 1);
-		TRY_EXPECT(tc_sha256_final(out->ptr, &s), 1);
-		out->len = HASH_SIZE;
+		wc_Sha256Hash(in->ptr, in->len, out->ptr);
+		out->len = 32;
 		return ok;
-#endif
-#ifdef MBEDTLS
-		size_t length;
-		TRY_EXPECT(psa_hash_compute(PSA_ALG_SHA_256, in->ptr, in->len,
-					    out->ptr, HASH_SIZE, &length),
-			   PSA_SUCCESS);
-		if (length != HASH_SIZE) {
-			return sha_failed;
-		}
-		out->len = HASH_SIZE;
-		PRINT_ARRAY("hash", out->ptr, out->len);
-		return ok;
-#endif
 	}
-
+#if EDHOC_CRYPTO_SUITE == 24
+	if (alg == SHA_384) {
+		wc_Sha384Hash(in->ptr, in->len, out->ptr);
+		out->len = 48;
+		return ok;
+	}
+#endif /* EDHOC_CRYPTO_SUITE == 24 */
+#if EDHOC_CRYPTO_SUITE == 25
+	if (alg == SHAKE_256) {
+		wc_Shake256Hash(in->ptr, in->len, out->ptr, 64);
+		out->len = 64;
+		return ok;
+	}
+#endif /* EDHOC_CRYPTO_SUITE == 25 */
+#ifdef HAVE_ASCON
+	if (alg == ASCON_HASH256) {
+		wc_AsconHash256 h;
+		wc_AsconHash256_Init(&h);
+		wc_AsconHash256_Update(&h, in->ptr, in->len);
+		wc_AsconHash256_Final(&h, out->ptr);
+		out->len = 32;
+		return ok;
+	}
+#endif /* HAVE_ASCON */
+#endif /* WOLFCRYPT */
 	return crypto_operation_not_implemented;
 }
+
+#ifdef WOLFCRYPT
+#ifdef WOLFSSL_HAVE_MLKEM
+#warning "ML-KEM: protocol integration pending"
+
+static int kyber_type(enum kem_alg alg)
+{
+	switch (alg) {
+	case ML_KEM_512:  return WC_ML_KEM_512;
+	case ML_KEM_768:  return WC_ML_KEM_768;
+	case ML_KEM_1024: return WC_ML_KEM_1024;
+	default:          return -1;
+	}
+}
+
+enum err kem_keygen(enum kem_alg alg, struct byte_array *ek,
+		    struct byte_array *dk)
+{
+	int type = kyber_type(alg);
+	if (type < 0)
+		return crypto_operation_not_implemented;
+
+	MlKemKey *key = wc_MlKemKey_New(type, NULL, INVALID_DEVID);
+	if (!key)
+		return crypto_operation_not_implemented;
+
+	WC_RNG rng;
+	wc_InitRng(&rng);
+	wc_MlKemKey_MakeKey(key, &rng);
+	wc_FreeRng(&rng);
+
+	wc_MlKemKey_EncodePublicKey(key, ek->ptr, (word32)ek->len);
+	wc_MlKemKey_EncodePrivateKey(key, dk->ptr, (word32)dk->len);
+
+	wc_MlKemKey_Delete(key, NULL);
+	return ok;
+}
+
+enum err kem_encap(enum kem_alg alg, const struct byte_array *ek,
+		   struct byte_array *ct, struct byte_array *ss)
+{
+	int type = kyber_type(alg);
+	if (type < 0)
+		return crypto_operation_not_implemented;
+
+	MlKemKey *key = wc_MlKemKey_New(type, NULL, INVALID_DEVID);
+	if (!key)
+		return crypto_operation_not_implemented;
+
+	wc_MlKemKey_DecodePublicKey(key, ek->ptr, (word32)ek->len);
+
+	WC_RNG rng;
+	wc_InitRng(&rng);
+	wc_MlKemKey_Encapsulate(key, ct->ptr, ss->ptr, &rng);
+	wc_FreeRng(&rng);
+
+	wc_MlKemKey_Delete(key, NULL);
+	return ok;
+}
+
+enum err kem_decap(enum kem_alg alg, const struct byte_array *dk,
+		   const struct byte_array *ct, struct byte_array *ss)
+{
+	int type = kyber_type(alg);
+	if (type < 0)
+		return crypto_operation_not_implemented;
+
+	MlKemKey *key = wc_MlKemKey_New(type, NULL, INVALID_DEVID);
+	if (!key)
+		return crypto_operation_not_implemented;
+
+	wc_MlKemKey_DecodePrivateKey(key, dk->ptr, (word32)dk->len);
+	wc_MlKemKey_Decapsulate(key, ss->ptr, ct->ptr, (word32)ct->len);
+
+	wc_MlKemKey_Delete(key, NULL);
+	return ok;
+}
+#endif /* WOLFSSL_HAVE_MLKEM */
+#endif /* WOLFCRYPT */

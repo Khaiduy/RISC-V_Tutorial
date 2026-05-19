@@ -1,5 +1,0 @@
-src export-ignore
-test export-ignore
-*.sh export-ignore
-Makefile export-ignore
-.* export-ignore

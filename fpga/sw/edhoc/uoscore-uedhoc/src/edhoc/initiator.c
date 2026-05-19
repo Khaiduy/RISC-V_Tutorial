@@ -230,6 +230,7 @@ static enum err msg3_only_gen(const struct edhoc_initiator_context *c,
 			   &ciphertext, &plaintext));
 
 	/*massage 3 create and send*/
+	rc->msg.len = sizeof(rc->msg_buf);
 	TRY(encode_bstr(&ciphertext, &rc->msg));
 	PRINT_ARRAY("msg3", rc->msg.ptr, rc->msg.len);
 
@@ -257,7 +258,7 @@ enum err msg3_gen(const struct edhoc_initiator_context *c,
 			 &th3, &PRK_3e2m));
 
 	/*generate message 3*/
-	msg3_only_gen(c, rc, static_dh_i, &th3, &PRK_3e2m, prk_out);
+	TRY(msg3_only_gen(c, rc, static_dh_i, &th3, &PRK_3e2m, prk_out));
 	return ok;
 }
 

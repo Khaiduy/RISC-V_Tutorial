@@ -168,6 +168,12 @@ class SmallRocket32M3Arty100TConfig extends Config(
   new chipyard.SmallRocket32M3Config
 )
 
+// RV32 version of SmallRocket for Arty 100T — pure software EDHOC (no hardware accelerator)
+class SmallRocket32M3HWArty100TConfig extends Config(
+  new WithTinyArty100TTweaks ++
+  new chipyard.config.WithBroadcastManager ++
+  new chipyard.SmallRocket32M3HWConfig
+)
 
 // class RocketDDRArty100TConfig extends Config(// one small rocket CPU with DDR
 //   new WithDDRArty100TTweaks ++

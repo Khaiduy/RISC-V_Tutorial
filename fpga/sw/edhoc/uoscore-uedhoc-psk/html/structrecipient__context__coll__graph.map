@@ -1,7 +1,0 @@
-<map id="recipient_context" name="recipient_context">
-<area shape="rect" id="Node000001" title=" " alt="" coords="64,108,199,133"/>
-<area shape="rect" id="Node000002" href="$structbyte__array.html" title=" " alt="" coords="5,5,97,31"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="67,41,96,82,120,106,116,110,92,86,63,44"/>
-<area shape="rect" id="Node000003" href="$structserver__replay__window__t.html" title=" " alt="" coords="121,5,301,31"/>
-<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="206,45,197,65,184,86,155,110,151,106,180,82,192,63,201,42"/>
-</map>

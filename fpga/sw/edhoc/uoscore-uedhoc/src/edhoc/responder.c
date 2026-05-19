@@ -12,6 +12,12 @@
 #include "edhoc/buffer_sizes.h"
 #include "edhoc_internal.h"
 
+#ifdef TIMING_BREAKDOWN
+#define _RDC(v) __asm__ volatile("rdcycle %0" : "=r"(v))
+volatile uint32_t _tb_msg2_cyc = 0;
+volatile uint32_t _tb_msg3proc_cyc = 0;
+#endif
+
 #include "common/memcpy_s.h"
 #include "common/print_util.h"
 #include "common/crypto_wrapper.h"
@@ -347,7 +353,13 @@ enum err edhoc_responder_run_extended(
 	TRY(rx(c->sock, &rc.msg));
 
 	/*create and send message 2*/
+#ifdef TIMING_BREAKDOWN
+	{ uint32_t _t0, _t1; _RDC(_t0);
 	TRY(msg2_gen(c, &rc, c_i_bytes));
+	_RDC(_t1); _tb_msg2_cyc = _t1 - _t0; }
+#else
+	TRY(msg2_gen(c, &rc, c_i_bytes));
+#endif
 	TRY(ead_process(c->params_ead_process, &rc.ead));
 	TRY(tx(c->sock, &rc.msg));
 
@@ -355,7 +367,13 @@ enum err edhoc_responder_run_extended(
 	PRINT_MSG("waiting to receive message 3...\n");
 	rc.msg.len = sizeof(rc.msg_buf);
 	TRY(rx(c->sock, &rc.msg));
+#ifdef TIMING_BREAKDOWN
+	{ uint32_t _t0, _t1; _RDC(_t0);
 	TRY(msg3_process(c, &rc, cred_i_array, prk_out, initiator_pub_key));
+	_RDC(_t1); _tb_msg3proc_cyc = _t1 - _t0; }
+#else
+	TRY(msg3_process(c, &rc, cred_i_array, prk_out, initiator_pub_key));
+#endif
 	TRY(ead_process(c->params_ead_process, &rc.ead));
 
 	/*create and send message 4*/

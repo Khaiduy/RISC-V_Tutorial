@@ -344,7 +344,7 @@ void test_loops(void) {
 // ============================================
 int main(void) {
     // Init UART
-    REG32(uart, UART_REG_DIV) = 868; //Frequency / Baudrate
+    REG32(uart, UART_REG_DIV) = 868; // 50MHz / 57600
     REG32(uart, UART_REG_TXCTRL) = UART_TXEN;
 
     kprintf("\r\nPrint with new frequency\r\r\r\n");

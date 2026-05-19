@@ -34,6 +34,8 @@ class Arty35TwoDDRHarness(override implicit val p: Parameters) extends Arty35TSh
 
   /*** JTAG ***/
   val jtagModule = dp(JTAGDebugOverlayKey).head.place(JTAGDebugDesignInput()).overlayOutput.jtag
+  // BScan JTAG: tunnels through onboard FT2232H USB cable (Channel A). Use WithArty35TJTAGBScanHarnessBinder.
+  val jtagBScanModule = dp(JTAGDebugBScanOverlayKey).head.place(JTAGDebugBScanDesignInput()).overlayOutput.jtag
 
   /*** UART ***/
   val io_uart_bb = BundleBridgeSource(() => new UARTPortIO(dp(PeripheryUARTKey).headOption.getOrElse(UARTParams(0))))

@@ -1,6 +1,0 @@
-name: zcbor
-
-build:
-  cmake-ext: True
-  kconfig-ext: True
-

@@ -23,20 +23,31 @@ class SmallRocket32Config extends Config(
   new freechips.rocketchip.subsystem.WithRV32 ++                    // 32-bit RISC-V
     new chipyard.iobinders.WithDontTouchIOBinders(false) ++
     // new chipyard.crypto.edhoc.WithEDHOC(address = BigInt(0x64004000L)) ++ // add EDHOC+OSCORE accelerator
-    new testchipip.WithMbusScratchpad(base = 0x80000000L, size=BigInt(64 << 10)) ++   // SRAM on-chip 64kB
+    new testchipip.WithMbusScratchpad(base = 0x80000000L, size=BigInt(128 << 10)) ++  // SRAM on-chip 128kB
     new freechips.rocketchip.subsystem.WithNoMemPort ++             // remove off-chip mem port
     new freechips.rocketchip.subsystem.WithNSmallCores(1) ++        // single small rocket-core
     new freechips.rocketchip.subsystem.WithoutTLMonitors ++
     new chipyard.config.AbstractConfig)
 
 
-// RV32 pure-software EDHOC config (no hardware accelerator), 64 kB on-chip scratchpad
+// RV32 pure-software EDHOC config (no hardware accelerator), 128 kB on-chip scratchpad
 class SmallRocket32M3Config extends Config(
   new freechips.rocketchip.subsystem.WithRV32 ++                    // 32-bit RISC-V
     new chipyard.iobinders.WithDontTouchIOBinders(false) ++
-    new testchipip.WithMbusScratchpad(base = 0x80000000L, size=BigInt(64 << 10)) ++   // SRAM on-chip 64kB
+    new testchipip.WithMbusScratchpad(base = 0x80000000L, size=BigInt(128 << 10)) ++  // SRAM on-chip 128kB
     new freechips.rocketchip.subsystem.WithNoMemPort ++             // remove off-chip mem port
     new freechips.rocketchip.subsystem.WithNSmallCores(1) ++        // single small rocket-core
+    new freechips.rocketchip.subsystem.WithoutTLMonitors ++
+    new chipyard.config.AbstractConfig)
+
+// RV32 hardware-accelerated EDHOC M3 config — adds edhoc_m3_top peripheral at 0x64004000
+class SmallRocket32M3HWConfig extends Config(
+  new chipyard.crypto.edhoc.WithEDHOCM3(address = BigInt(0x64004000L)) ++
+    new freechips.rocketchip.subsystem.WithRV32 ++
+    new chipyard.iobinders.WithDontTouchIOBinders(false) ++
+    new testchipip.WithMbusScratchpad(base = 0x80000000L, size=BigInt(128 << 10)) ++  // SRAM on-chip 128kB
+    new freechips.rocketchip.subsystem.WithNoMemPort ++
+    new freechips.rocketchip.subsystem.WithNSmallCores(1) ++
     new freechips.rocketchip.subsystem.WithoutTLMonitors ++
     new chipyard.config.AbstractConfig)
 

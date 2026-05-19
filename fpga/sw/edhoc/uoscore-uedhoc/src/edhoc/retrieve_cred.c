@@ -163,6 +163,7 @@ enum err retrieve_cred(bool static_dh_auth, struct cred_array *cred_array,
 				   pk, g));
 		return ok;
 	}
+#ifdef EDHOC_WITH_CERT
 	/*x5chain*/
 	else if (map.id_cred_x_map_x5chain_present) {
 		struct const_byte_array cert = BYTE_ARRAY_INIT(
@@ -202,6 +203,7 @@ enum err retrieve_cred(bool static_dh_auth, struct cred_array *cred_array,
 				     cred, pk, g));
 		return ok;
 	}
+#endif /* EDHOC_WITH_CERT */
 
 	return credential_not_found;
 }

@@ -6,7 +6,7 @@ import freechips.rocketchip.diplomacy.{InModuleBody, LazyModule, LazyRawModuleIm
 import org.chipsalliance.cde.config.Parameters
 import sifive.fpgashells.ip.xilinx.{IBUF, PowerOnResetFPGAOnly}
 import sifive.fpgashells.shell.xilinx.Series7Shell
-import sifive.fpgashells.shell.{ClockInputDesignInput, ClockInputOverlayKey, ClockInputShellInput, DDROverlayKey, DDRShellInput, DesignKey, GPIOOverlayKey, GPIOShellInput, JTAGDebugOverlayKey, JTAGDebugShellInput, SPIOverlayKey, SPIShellInput, UARTOverlayKey, UARTShellInput}
+import sifive.fpgashells.shell.{ClockInputDesignInput, ClockInputOverlayKey, ClockInputShellInput, DDROverlayKey, DDRShellInput, DesignKey, GPIOOverlayKey, GPIOShellInput, JTAGDebugBScanOverlayKey, JTAGDebugBScanShellInput, JTAGDebugOverlayKey, JTAGDebugShellInput, SPIOverlayKey, SPIShellInput, UARTOverlayKey, UARTShellInput}
 
 abstract class Arty100TShellCustomOverlays()(implicit p: Parameters) extends Series7Shell {
   // System
@@ -15,7 +15,8 @@ abstract class Arty100TShellCustomOverlays()(implicit p: Parameters) extends Ser
   val ddr       = Overlay(DDROverlayKey, new DDRArtyShellPlacer(this, DDRShellInput()))
 
   // Peripheries
-  val jtag  = Overlay(JTAGDebugOverlayKey, new JTAGDebugArtyShellPlacer(this, JTAGDebugShellInput()))
+  val jtag     = Overlay(JTAGDebugOverlayKey, new JTAGDebugArtyShellPlacer(this, JTAGDebugShellInput()))
+  val jtagBScan = Overlay(JTAGDebugBScanOverlayKey, new JTAGDebugBScanArtyCustomShellPlacer(this, JTAGDebugBScanShellInput()))
   val uart  = Seq.tabulate(2)(i => Overlay(UARTOverlayKey, new UARTArtyShellPlacer(this, UARTShellInput(index = i))(valName = ValName(s"uart_$i"))))
   val sdio  = Seq.tabulate(3)(i => Overlay(SPIOverlayKey, new SDIOArtyShellPlacer(this, SPIShellInput())(valName = ValName(s"sdio_$i"))))
   val gpio  = Overlay(GPIOOverlayKey, new GPIOArtyShellPlacer(this, GPIOShellInput()))
