@@ -1,0 +1,855 @@
+diff --git a/configure.ac b/configure.ac
+index 786514eea..152471c3d 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -5869,6 +5869,30 @@ fi
+ AS_IF([test "x$ENABLED_CMAC" = "xyes"],
+       [AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_CMAC -DWOLFSSL_AES_DIRECT"])
+ 
++# KMAC (NIST SP 800-185)
++AC_ARG_ENABLE([kmac],
++    [AS_HELP_STRING([--enable-kmac],[Enable KMAC (default: disabled)])],
++    [ ENABLED_KMAC=$enableval ],
++    [ ENABLED_KMAC=no ]
++    )
++
++# FIPS traditionally does not support SHAKE128/256 (so neither KMAC); v6+ does.
++AS_IF([test "x$ENABLED_FIPS" = "xyes" && test $HAVE_FIPS_VERSION -lt 6],
++        [ENABLED_KMAC="no"])
++
++if test "$ENABLED_KMAC" != "no"
++then
++    if test "$ENABLED_SHA3" = "no"
++    then
++        AC_MSG_ERROR([kmac requires SHA-3: --enable-sha3])
++    fi
++    if test "$ENABLED_SHAKE128" = "no" && test "$ENABLED_SHAKE256" = "no"
++    then
++        AC_MSG_ERROR([kmac requires SHAKE128 and/or SHAKE256: --enable-shake128 / --enable-shake256])
++    fi
++    AM_CFLAGS="$AM_CFLAGS -DWOLFSSL_KMAC"
++fi
++
+ # SHE (Secure Hardware Extension) key update message generation
+ # --enable-she=standard: standard SHE support
+ # --enable-she=extended: standard + extended overrides (custom KDF/headers)
+@@ -12024,6 +12048,7 @@ AM_CONDITIONAL([BUILD_FIPS_V7],[test $HAVE_FIPS_VERSION = 7])
+ AM_CONDITIONAL([BUILD_FIPS_V7_PLUS],[test $HAVE_FIPS_VERSION -ge 7])
+ AM_CONDITIONAL([BUILD_SIPHASH],[test "x$ENABLED_SIPHASH" = "xyes" || test "x$ENABLED_USERSETTINGS" = "xyes"])
+ AM_CONDITIONAL([BUILD_CMAC],[test "x$ENABLED_CMAC" = "xyes" || test "x$ENABLED_USERSETTINGS" = "xyes"])
++AM_CONDITIONAL([BUILD_KMAC],[test "x$ENABLED_KMAC" = "xyes" || test "x$ENABLED_USERSETTINGS" = "xyes"])
+ AM_CONDITIONAL([BUILD_SHE],[test "x$ENABLED_SHE" = "xstandard" || test "x$ENABLED_SHE" = "xextended" || test "x$ENABLED_USERSETTINGS" = "xyes"])
+ AM_CONDITIONAL([BUILD_SELFTEST],[test "x$ENABLED_SELFTEST" = "xyes"])
+ AM_CONDITIONAL([BUILD_SHA224],[test "x$ENABLED_SHA224" = "xyes" || test "x$ENABLED_USERSETTINGS" = "xyes"])
+@@ -12501,6 +12526,7 @@ echo "   * BLAKE2B:                    $ENABLED_BLAKE2B"
+ echo "   * BLAKE2S:                    $ENABLED_BLAKE2S"
+ echo "   * SipHash:                    $ENABLED_SIPHASH"
+ echo "   * CMAC:                       $ENABLED_CMAC"
++echo "   * KMAC:                       $ENABLED_KMAC"
+ echo "   * keygen:                     $ENABLED_KEYGEN"
+ echo "   * acert:                      $ENABLED_ACERT"
+ echo "   * certgen:                    $ENABLED_CERTGEN"
+diff --git a/src/include.am b/src/include.am
+index ecb4760e1..91f5fd19c 100644
+--- a/src/include.am
++++ b/src/include.am
+@@ -1405,6 +1405,10 @@ if BUILD_CMAC
+ src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/cmac.c
+ endif
+ 
++if BUILD_KMAC
++src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/kmac.c
++endif
++
+ if BUILD_SHE
+ src_libwolfssl@LIBSUFFIX@_la_SOURCES += wolfcrypt/src/wc_she.c
+ endif
+diff --git a/wolfcrypt/src/kmac.c b/wolfcrypt/src/kmac.c
+new file mode 100644
+index 000000000..8370de75a
+--- /dev/null
++++ b/wolfcrypt/src/kmac.c
+@@ -0,0 +1,366 @@
++/* kmac.c
++ *
++ * Copyright (C) 2006-2026 wolfSSL Inc.
++ *
++ * This file is part of wolfSSL.
++ *
++ * wolfSSL is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * wolfSSL is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
++ */
++
++/* KMAC128 and KMAC256 per NIST SP 800-185.
++ *
++ * KMAC(K, X, L, S) = cSHAKE(newX, L, "KMAC", S)
++ *   newX = bytepad(encode_string(K), rate) || X || right_encode(L_in_bits)
++ *   (right_encode(0) is used in XOF mode)
++ *
++ * KMAC128 -> SHAKE128 underneath (rate 168 bytes)
++ * KMAC256 -> SHAKE256 underneath (rate 136 bytes)
++ *
++ * cSHAKE differs from SHAKE only by domain-separation byte 0x04 (vs SHAKE's
++ * 0x1F), supplied via the internal wc_Sha3_cSHAKE{128,256}_Final helpers.
++ */
++
++#include <wolfssl/wolfcrypt/libwolfssl_sources.h>
++
++#ifdef WOLFSSL_KMAC
++
++#include <wolfssl/wolfcrypt/kmac.h>
++#include <wolfssl/wolfcrypt/sha3.h>
++#include <wolfssl/wolfcrypt/error-crypt.h>
++
++#ifdef NO_INLINE
++    #include <wolfssl/wolfcrypt/misc.h>
++#else
++    #define WOLFSSL_MISC_INCLUDED
++    #include <wolfcrypt/src/misc.c>
++#endif
++
++#define KMAC128_RATE 168
++#define KMAC256_RATE 136
++
++/* SP 800-185 §2.3.1: left_encode(x).
++ * Writes (1 + n) bytes to out, where n is the smallest positive integer with
++ * 2^(8n) > x (so x=0 yields n=1). Layout: [n][x as n big-endian bytes].
++ * Caller guarantees out has at least 9 bytes. Returns bytes written. */
++static word32 sp800_185_left_encode(byte out[9], word64 x)
++{
++    word32 n = 0;
++    word32 i;
++    word64 v = x;
++
++    do {
++        n++;
++        v >>= 8;
++    } while (v != 0);
++
++    out[0] = (byte)n;
++    for (i = 0; i < n; i++) {
++        out[1 + i] = (byte)(x >> (8 * (n - 1 - i)));
++    }
++    return n + 1;
++}
++
++/* SP 800-185 §2.3.1: right_encode(x).
++ * Layout: [x as n big-endian bytes][n]. Same n rule as left_encode. */
++static word32 sp800_185_right_encode(byte out[9], word64 x)
++{
++    word32 n = 0;
++    word32 i;
++    word64 v = x;
++
++    do {
++        n++;
++        v >>= 8;
++    } while (v != 0);
++
++    for (i = 0; i < n; i++) {
++        out[i] = (byte)(x >> (8 * (n - 1 - i)));
++    }
++    out[n] = (byte)n;
++    return n + 1;
++}
++
++/* Absorb data into the underlying SHAKE state for this KMAC instance. */
++static int kmac_absorb(Kmac* kmac, const byte* data, word32 len)
++{
++    if (len == 0) {
++        return 0;
++    }
++#ifdef WOLFSSL_SHAKE128
++    if (kmac->type == WC_KMAC_128) {
++        return wc_Shake128_Update(&kmac->sha3, data, len);
++    }
++#endif
++#ifdef WOLFSSL_SHAKE256
++    if (kmac->type == WC_KMAC_256) {
++        return wc_Shake256_Update(&kmac->sha3, data, len);
++    }
++#endif
++    return BAD_FUNC_ARG;
++}
++
++/* Absorb zero-padding bytes (in chunks) so the running byte count is a
++ * multiple of w. */
++static int kmac_absorb_zero_pad(Kmac* kmac, word32 absorbed, word32 w)
++{
++    static const byte zeros[KMAC128_RATE] = { 0 };
++    word32 padLen = w - (absorbed % w);
++
++    if (padLen == w) {
++        return 0;
++    }
++    while (padLen > 0) {
++        word32 chunk = (padLen > sizeof(zeros)) ? (word32)sizeof(zeros) :
++                                                  padLen;
++        int ret = kmac_absorb(kmac, zeros, chunk);
++        if (ret != 0) {
++            return ret;
++        }
++        padLen -= chunk;
++    }
++    return 0;
++}
++
++/* Absorb encode_string(S) = left_encode(|S|*8) || S, returning bytes
++ * absorbed via *absorbed (added to running total). */
++static int kmac_absorb_encoded_string(Kmac* kmac, const byte* s, word32 sLen,
++                                      word32* absorbed)
++{
++    byte enc[9];
++    word32 encLen;
++    int ret;
++
++    encLen = sp800_185_left_encode(enc, (word64)sLen * 8);
++    ret = kmac_absorb(kmac, enc, encLen);
++    if (ret != 0) {
++        return ret;
++    }
++    *absorbed += encLen;
++
++    ret = kmac_absorb(kmac, s, sLen);
++    if (ret != 0) {
++        return ret;
++    }
++    *absorbed += sLen;
++
++    return 0;
++}
++
++/* Absorb the cSHAKE prefix bytepad(encode_string("KMAC") || encode_string(S),
++ * rate) into the SHAKE state. */
++static int kmac_absorb_cshake_prefix(Kmac* kmac, const byte* custom,
++                                     word32 customLen, word32 rate)
++{
++    /* encode_string("KMAC") = left_encode(32) || "KMAC" = 01 20 4B 4D 41 43 */
++    static const byte encKmac[] = { 0x01, 0x20, 0x4B, 0x4D, 0x41, 0x43 };
++    byte enc[9];
++    word32 encLen;
++    word32 absorbed = 0;
++    int ret;
++
++    /* left_encode(rate) */
++    encLen = sp800_185_left_encode(enc, rate);
++    ret = kmac_absorb(kmac, enc, encLen);
++    if (ret != 0) {
++        return ret;
++    }
++    absorbed += encLen;
++
++    /* encode_string("KMAC") */
++    ret = kmac_absorb(kmac, encKmac, (word32)sizeof(encKmac));
++    if (ret != 0) {
++        return ret;
++    }
++    absorbed += (word32)sizeof(encKmac);
++
++    /* encode_string(S) */
++    ret = kmac_absorb_encoded_string(kmac, custom, customLen, &absorbed);
++    if (ret != 0) {
++        return ret;
++    }
++
++    /* Pad to next multiple of rate. */
++    return kmac_absorb_zero_pad(kmac, absorbed, rate);
++}
++
++/* Absorb bytepad(encode_string(K), rate). */
++static int kmac_absorb_key_block(Kmac* kmac, const byte* key, word32 keyLen,
++                                 word32 rate)
++{
++    byte enc[9];
++    word32 encLen;
++    word32 absorbed = 0;
++    int ret;
++
++    encLen = sp800_185_left_encode(enc, rate);
++    ret = kmac_absorb(kmac, enc, encLen);
++    if (ret != 0) {
++        return ret;
++    }
++    absorbed += encLen;
++
++    ret = kmac_absorb_encoded_string(kmac, key, keyLen, &absorbed);
++    if (ret != 0) {
++        return ret;
++    }
++
++    return kmac_absorb_zero_pad(kmac, absorbed, rate);
++}
++
++int wc_InitKmac(Kmac* kmac, int type,
++                const byte* key, word32 keyLen,
++                const byte* custom, word32 customLen,
++                void* heap, int devId)
++{
++    int ret;
++    word32 rate;
++
++    if (kmac == NULL) {
++        return BAD_FUNC_ARG;
++    }
++    if (key == NULL && keyLen != 0) {
++        return BAD_FUNC_ARG;
++    }
++    if (custom == NULL && customLen != 0) {
++        return BAD_FUNC_ARG;
++    }
++
++    XMEMSET(kmac, 0, sizeof(*kmac));
++    kmac->type = (byte)type;
++    kmac->heap = heap;
++    kmac->devId = devId;
++
++    switch (type) {
++#ifdef WOLFSSL_SHAKE128
++        case WC_KMAC_128:
++            ret = wc_InitShake128(&kmac->sha3, heap, devId);
++            rate = KMAC128_RATE;
++            break;
++#endif
++#ifdef WOLFSSL_SHAKE256
++        case WC_KMAC_256:
++            ret = wc_InitShake256(&kmac->sha3, heap, devId);
++            rate = KMAC256_RATE;
++            break;
++#endif
++        default:
++            return BAD_FUNC_ARG;
++    }
++    if (ret != 0) {
++        return ret;
++    }
++
++    ret = kmac_absorb_cshake_prefix(kmac, custom, customLen, rate);
++    if (ret != 0) {
++        return ret;
++    }
++
++    return kmac_absorb_key_block(kmac, key, keyLen, rate);
++}
++
++int wc_KmacSetXof(Kmac* kmac, int xof)
++{
++    if (kmac == NULL) {
++        return BAD_FUNC_ARG;
++    }
++    if (kmac->updated || kmac->finalized) {
++        return BAD_STATE_E;
++    }
++    kmac->isXof = (byte)(xof ? 1 : 0);
++    return 0;
++}
++
++int wc_KmacUpdate(Kmac* kmac, const byte* in, word32 inSz)
++{
++    if (kmac == NULL || (in == NULL && inSz != 0)) {
++        return BAD_FUNC_ARG;
++    }
++    if (kmac->finalized) {
++        return BAD_STATE_E;
++    }
++    if (inSz == 0) {
++        return 0;
++    }
++    kmac->updated = 1;
++    return kmac_absorb(kmac, in, inSz);
++}
++
++int wc_KmacFinal(Kmac* kmac, byte* out, word32 outSz)
++{
++    byte enc[9];
++    word32 encLen;
++    word64 lBits;
++    int ret;
++
++    if (kmac == NULL || out == NULL || outSz == 0) {
++        return BAD_FUNC_ARG;
++    }
++    if (kmac->finalized) {
++        return BAD_STATE_E;
++    }
++
++    lBits = kmac->isXof ? (word64)0 : ((word64)outSz * 8);
++    encLen = sp800_185_right_encode(enc, lBits);
++    ret = kmac_absorb(kmac, enc, encLen);
++    if (ret != 0) {
++        return ret;
++    }
++
++    switch (kmac->type) {
++#ifdef WOLFSSL_SHAKE128
++        case WC_KMAC_128:
++            ret = wc_Sha3_cSHAKE128_Final(&kmac->sha3, out, outSz);
++            break;
++#endif
++#ifdef WOLFSSL_SHAKE256
++        case WC_KMAC_256:
++            ret = wc_Sha3_cSHAKE256_Final(&kmac->sha3, out, outSz);
++            break;
++#endif
++        default:
++            return BAD_FUNC_ARG;
++    }
++
++    if (ret == 0) {
++        kmac->finalized = 1;
++    }
++    return ret;
++}
++
++int wc_KmacFree(Kmac* kmac)
++{
++    if (kmac == NULL) {
++        return BAD_FUNC_ARG;
++    }
++
++    switch (kmac->type) {
++#ifdef WOLFSSL_SHAKE128
++        case WC_KMAC_128:
++            wc_Shake128_Free(&kmac->sha3);
++            break;
++#endif
++#ifdef WOLFSSL_SHAKE256
++        case WC_KMAC_256:
++            wc_Shake256_Free(&kmac->sha3);
++            break;
++#endif
++        default:
++            break;
++    }
++    ForceZero(kmac, sizeof(*kmac));
++    return 0;
++}
++
++#endif /* WOLFSSL_KMAC */
+diff --git a/wolfcrypt/src/sha3.c b/wolfcrypt/src/sha3.c
+index d89827ea4..374041526 100644
+--- a/wolfcrypt/src/sha3.c
++++ b/wolfcrypt/src/sha3.c
+@@ -1923,6 +1923,39 @@ int wc_Shake128_Copy(wc_Shake* src, wc_Shake* dst)
+ {
+     return wc_Sha3Copy(src, dst);
+ }
++
++#ifdef WOLFSSL_KMAC
++/* cSHAKE128 finalize. Same as SHAKE128 finalize except the
++ * domain-separation byte is 0x04 (NIST SP 800-185 §3.3) instead of
++ * SHAKE's 0x1F. Internal helper for KMAC. */
++int wc_Sha3_cSHAKE128_Final(wc_Shake* shake, byte* hash, word32 hashLen)
++{
++    int ret;
++
++    if (shake == NULL || hash == NULL) {
++        return BAD_FUNC_ARG;
++    }
++
++#if defined(PSOC6_HASH_SHA3)
++    ret = wolfSSL_CryptHwMutexLock();
++    if (ret == 0) {
++        ret = wc_Psoc6_Sha3_Final(shake, 0x04, hash, WC_SHA3_128_COUNT,
++                                  hashLen);
++        if (ret == 0) {
++            ret = wc_Psoc6_Sha3_Init(shake);
++        }
++        wolfSSL_CryptHwMutexUnLock();
++    }
++#else
++    ret = Sha3Final(shake, 0x04, hash, WC_SHA3_128_COUNT, hashLen);
++    if (ret == 0) {
++        ret = InitSha3(shake);
++    }
++#endif
++
++    return ret;
++}
++#endif /* WOLFSSL_KMAC */
+ #endif
+ 
+ #ifdef WOLFSSL_SHAKE256
+@@ -2163,6 +2196,39 @@ int wc_Shake256_Copy(wc_Shake* src, wc_Shake* dst)
+ {
+     return wc_Sha3Copy(src, dst);
+ }
++
++#ifdef WOLFSSL_KMAC
++/* cSHAKE256 finalize. Same as SHAKE256 finalize except the
++ * domain-separation byte is 0x04 (NIST SP 800-185 §3.3) instead of
++ * SHAKE's 0x1F. Internal helper for KMAC. */
++int wc_Sha3_cSHAKE256_Final(wc_Shake* shake, byte* hash, word32 hashLen)
++{
++    int ret;
++
++    if (shake == NULL || hash == NULL) {
++        return BAD_FUNC_ARG;
++    }
++
++#if defined(PSOC6_HASH_SHA3)
++    ret = wolfSSL_CryptHwMutexLock();
++    if (ret == 0) {
++        ret = wc_Psoc6_Sha3_Final(shake, 0x04, hash, WC_SHA3_256_COUNT,
++                                  hashLen);
++        if (ret == 0) {
++            ret = wc_Psoc6_Sha3_Init(shake);
++        }
++        wolfSSL_CryptHwMutexUnLock();
++    }
++#else
++    ret = Sha3Final(shake, 0x04, hash, WC_SHA3_256_COUNT, hashLen);
++    if (ret == 0) {
++        ret = InitSha3(shake);
++    }
++#endif
++
++    return ret;
++}
++#endif /* WOLFSSL_KMAC */
+ #endif
+ 
+ #endif /* WOLFSSL_SHA3 */
+diff --git a/wolfcrypt/test/test.c b/wolfcrypt/test/test.c
+index 757bd737e..e72d9034d 100644
+--- a/wolfcrypt/test/test.c
++++ b/wolfcrypt/test/test.c
+@@ -348,6 +348,9 @@ static const byte const_byte_array[] = "A+Gd\0\0\0";
+ #include <wolfssl/wolfcrypt/aes.h>
+ #include <wolfssl/wolfcrypt/wc_encrypt.h>
+ #include <wolfssl/wolfcrypt/cmac.h>
++#ifdef WOLFSSL_KMAC
++    #include <wolfssl/wolfcrypt/kmac.h>
++#endif
+ #ifdef WOLFSSL_SHE
+     #include <wolfssl/wolfcrypt/wc_she.h>
+ #endif
+@@ -856,6 +859,9 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t  aes192_test(void);
+ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t  aes256_test(void);
+ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t  aesofb_test(void);
+ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t  cmac_test(void);
++#ifdef WOLFSSL_KMAC
++WOLFSSL_TEST_SUBROUTINE wc_test_ret_t  kmac_test(void);
++#endif
+ #ifdef WOLFSSL_SHE
+ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t  she_test(void);
+ #endif
+@@ -3203,6 +3209,13 @@ options: [-s max_relative_stack_bytes] [-m max_relative_heap_memory_bytes]\n\
+         TEST_PASS("CMAC     test passed!\n");
+ #endif
+ 
++#ifdef WOLFSSL_KMAC
++    if ( (ret = kmac_test()) != 0)
++        TEST_FAIL("KMAC     test failed!\n", ret);
++    else
++        TEST_PASS("KMAC     test passed!\n");
++#endif
++
+ #if defined(WOLFSSL_SHE) && !defined(NO_AES)
+     if ( (ret = she_test()) != 0)
+         TEST_FAIL("SHE      test failed!\n", ret);
+@@ -58524,6 +58537,183 @@ WOLFSSL_TEST_SUBROUTINE wc_test_ret_t cmac_test(void)
+ 
+ #endif /* !NO_AES && WOLFSSL_CMAC */
+ 
++#ifdef WOLFSSL_KMAC
++
++typedef struct KMAC_Test_Case {
++    int          type;       /* WC_KMAC_128 or WC_KMAC_256 */
++    int          xof;        /* 0 or 1 */
++    const byte*  k;
++    word32       kSz;
++    const byte*  m;
++    word32       mSz;
++    const byte*  s;
++    word32       sSz;
++    const byte*  out;
++    word32       outSz;
++    const char*  name;
++} KMAC_Test_Case;
++
++WOLFSSL_TEST_SUBROUTINE wc_test_ret_t kmac_test(void)
++{
++    /* NIST SP 800-185 KMAC sample data (Key, Input, Custom, Output). */
++    WOLFSSL_SMALL_STACK_STATIC const byte kmacKey[32] = {
++        0x40,0x41,0x42,0x43,0x44,0x45,0x46,0x47,
++        0x48,0x49,0x4A,0x4B,0x4C,0x4D,0x4E,0x4F,
++        0x50,0x51,0x52,0x53,0x54,0x55,0x56,0x57,
++        0x58,0x59,0x5A,0x5B,0x5C,0x5D,0x5E,0x5F
++    };
++    WOLFSSL_SMALL_STACK_STATIC const byte kmacIn[4] = { 0,1,2,3 };
++    WOLFSSL_SMALL_STACK_STATIC const byte kmacCustom[] =
++        "My Tagged Application";
++
++#ifdef WOLFSSL_SHAKE128
++    WOLFSSL_SMALL_STACK_STATIC const byte kmac128_out1[32] = {
++        0xE5,0x78,0x0B,0x0D,0x3E,0xA6,0xF7,0xD3,
++        0xA4,0x29,0xC5,0x70,0x6A,0xA4,0x3A,0x00,
++        0xFA,0xDB,0xD7,0xD4,0x96,0x28,0x83,0x9E,
++        0x31,0x87,0x24,0x3F,0x45,0x6E,0xE1,0x4E
++    };
++    WOLFSSL_SMALL_STACK_STATIC const byte kmac128_out2[32] = {
++        0x3B,0x1F,0xBA,0x96,0x3C,0xD8,0xB0,0xB5,
++        0x9E,0x8C,0x1A,0x6D,0x71,0x88,0x8B,0x71,
++        0x43,0x65,0x1A,0xF8,0xBA,0x0A,0x70,0x70,
++        0xC0,0x97,0x9E,0x28,0x11,0x32,0x4A,0xA5
++    };
++    WOLFSSL_SMALL_STACK_STATIC const byte kmac128_xof[32] = {
++        0x31,0xA4,0x45,0x27,0xB4,0xED,0x9F,0x5C,
++        0x61,0x01,0xD1,0x1D,0xE6,0xD2,0x6F,0x06,
++        0x20,0xAA,0x5C,0x34,0x1D,0xEF,0x41,0x29,
++        0x96,0x57,0xFE,0x9D,0xF1,0xA3,0xB1,0x6C
++    };
++#endif
++#ifdef WOLFSSL_SHAKE256
++    WOLFSSL_SMALL_STACK_STATIC const byte kmac256_out[64] = {
++        0x20,0xC5,0x70,0xC3,0x13,0x46,0xF7,0x03,
++        0xC9,0xAC,0x36,0xC6,0x1C,0x03,0xCB,0x64,
++        0xC3,0x97,0x0D,0x0C,0xFC,0x78,0x7E,0x9B,
++        0x79,0x59,0x9D,0x27,0x3A,0x68,0xD2,0xF7,
++        0xF6,0x9D,0x4C,0xC3,0xDE,0x9D,0x10,0x4A,
++        0x35,0x16,0x89,0xF2,0x7C,0xF6,0xF5,0x95,
++        0x1F,0x01,0x03,0xF3,0x3F,0x4F,0x24,0x87,
++        0x10,0x24,0xD9,0xC2,0x77,0x73,0xA8,0xDD
++    };
++    WOLFSSL_SMALL_STACK_STATIC const byte kmac256_xof[64] = {
++        0x17,0x55,0x13,0x3F,0x15,0x34,0x75,0x2A,
++        0xAD,0x07,0x48,0xF2,0xC7,0x06,0xFB,0x5C,
++        0x78,0x45,0x12,0xCA,0xB8,0x35,0xCD,0x15,
++        0x67,0x6B,0x16,0xC0,0xC6,0x64,0x7F,0xA9,
++        0x6F,0xAA,0x7A,0xF6,0x34,0xA0,0xBF,0x8F,
++        0xF6,0xDF,0x39,0x37,0x4F,0xA0,0x0F,0xAD,
++        0x9A,0x39,0xE3,0x22,0xA7,0xC9,0x20,0x65,
++        0xA6,0x4E,0xB1,0xFB,0x08,0x01,0xEB,0x2B
++    };
++#endif
++
++    /* customLen excludes the implicit NUL terminator from the literal. */
++    const word32 customLen = (word32)(sizeof(kmacCustom) - 1);
++
++    const KMAC_Test_Case testCases[] = {
++#ifdef WOLFSSL_SHAKE128
++        { WC_KMAC_128, 0, kmacKey, sizeof(kmacKey), kmacIn, sizeof(kmacIn),
++          NULL, 0, kmac128_out1, sizeof(kmac128_out1), "KMAC128 NoCustom" },
++        { WC_KMAC_128, 0, kmacKey, sizeof(kmacKey), kmacIn, sizeof(kmacIn),
++          kmacCustom, customLen, kmac128_out2, sizeof(kmac128_out2),
++          "KMAC128 Custom" },
++        { WC_KMAC_128, 1, kmacKey, sizeof(kmacKey), kmacIn, sizeof(kmacIn),
++          kmacCustom, customLen, kmac128_xof, sizeof(kmac128_xof),
++          "KMAC128 XOF Custom" },
++#endif
++#ifdef WOLFSSL_SHAKE256
++        { WC_KMAC_256, 0, kmacKey, sizeof(kmacKey), kmacIn, sizeof(kmacIn),
++          kmacCustom, customLen, kmac256_out, sizeof(kmac256_out),
++          "KMAC256 Custom" },
++        { WC_KMAC_256, 1, kmacKey, sizeof(kmacKey), kmacIn, sizeof(kmacIn),
++          kmacCustom, customLen, kmac256_xof, sizeof(kmac256_xof),
++          "KMAC256 XOF Custom" },
++#endif
++    };
++
++    Kmac          kmac;
++    byte          mac[64];
++    const KMAC_Test_Case* tc;
++    word32        i;
++    wc_test_ret_t ret;
++
++    WOLFSSL_ENTER("kmac_test");
++
++    for (i = 0; i < sizeof(testCases)/sizeof(testCases[0]); i++) {
++        tc = &testCases[i];
++        XMEMSET(mac, 0, sizeof(mac));
++
++        ret = wc_InitKmac(&kmac, tc->type, tc->k, tc->kSz, tc->s, tc->sSz,
++                          HEAP_HINT, INVALID_DEVID);
++        if (ret != 0) ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
++
++        if (tc->xof) {
++            ret = wc_KmacSetXof(&kmac, 1);
++            if (ret != 0) ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
++        }
++
++        ret = wc_KmacUpdate(&kmac, tc->m, tc->mSz);
++        if (ret != 0) ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
++
++        ret = wc_KmacFinal(&kmac, mac, tc->outSz);
++        if (ret != 0) ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
++
++        if (XMEMCMP(mac, tc->out, tc->outSz) != 0)
++            ERROR_OUT(WC_TEST_RET_ENC_NC, out);
++
++        wc_KmacFree(&kmac);
++    }
++
++#ifdef WOLFSSL_SHAKE128
++    /* Split Update: same as KMAC128 NoCustom but feed input in two pieces. */
++    XMEMSET(mac, 0, sizeof(mac));
++    ret = wc_InitKmac(&kmac, WC_KMAC_128, kmacKey, sizeof(kmacKey),
++                      NULL, 0, HEAP_HINT, INVALID_DEVID);
++    if (ret != 0) ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
++    ret = wc_KmacUpdate(&kmac, kmacIn, 2);
++    if (ret != 0) ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
++    ret = wc_KmacUpdate(&kmac, kmacIn + 2, sizeof(kmacIn) - 2);
++    if (ret != 0) ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
++    ret = wc_KmacFinal(&kmac, mac, sizeof(kmac128_out1));
++    if (ret != 0) ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
++    if (XMEMCMP(mac, kmac128_out1, sizeof(kmac128_out1)) != 0)
++        ERROR_OUT(WC_TEST_RET_ENC_NC, out);
++    wc_KmacFree(&kmac);
++#endif
++
++    /* Negative tests. */
++    if (wc_InitKmac(NULL, WC_KMAC_128, kmacKey, sizeof(kmacKey), NULL, 0,
++                    HEAP_HINT, INVALID_DEVID) != BAD_FUNC_ARG)
++        ERROR_OUT(WC_TEST_RET_ENC_NC, out);
++    if (wc_InitKmac(&kmac, 0xFF, kmacKey, sizeof(kmacKey), NULL, 0,
++                    HEAP_HINT, INVALID_DEVID) != BAD_FUNC_ARG)
++        ERROR_OUT(WC_TEST_RET_ENC_NC, out);
++
++#ifdef WOLFSSL_SHAKE128
++    /* Update-after-Final and SetXof-after-Update. */
++    ret = wc_InitKmac(&kmac, WC_KMAC_128, kmacKey, sizeof(kmacKey),
++                      NULL, 0, HEAP_HINT, INVALID_DEVID);
++    if (ret != 0) ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
++    ret = wc_KmacUpdate(&kmac, kmacIn, sizeof(kmacIn));
++    if (ret != 0) ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
++    if (wc_KmacSetXof(&kmac, 1) != BAD_STATE_E)
++        ERROR_OUT(WC_TEST_RET_ENC_NC, out);
++    ret = wc_KmacFinal(&kmac, mac, 32);
++    if (ret != 0) ERROR_OUT(WC_TEST_RET_ENC_EC(ret), out);
++    if (wc_KmacUpdate(&kmac, kmacIn, sizeof(kmacIn)) != BAD_STATE_E)
++        ERROR_OUT(WC_TEST_RET_ENC_NC, out);
++    wc_KmacFree(&kmac);
++#endif
++
++    ret = 0;
++out:
++    return ret;
++}
++
++#endif /* WOLFSSL_KMAC */
++
+ #if defined(WOLFSSL_SHE) && !defined(NO_AES)
+ 
+ #if defined(WC_SHE_SW_DEFAULT) && defined(WOLF_CRYPTO_CB) && \
+diff --git a/wolfssl/wolfcrypt/include.am b/wolfssl/wolfcrypt/include.am
+index 9ef11785f..33d460df1 100644
+--- a/wolfssl/wolfcrypt/include.am
++++ b/wolfssl/wolfcrypt/include.am
+@@ -10,6 +10,7 @@ nobase_include_HEADERS+= \
+                          wolfssl/wolfcrypt/poly1305.h \
+                          wolfssl/wolfcrypt/camellia.h \
+                          wolfssl/wolfcrypt/cmac.h \
++                         wolfssl/wolfcrypt/kmac.h \
+                          wolfssl/wolfcrypt/wc_she.h \
+                          wolfssl/wolfcrypt/coding.h \
+                          wolfssl/wolfcrypt/compress.h \
+diff --git a/wolfssl/wolfcrypt/kmac.h b/wolfssl/wolfcrypt/kmac.h
+new file mode 100644
+index 000000000..2942cb743
+--- /dev/null
++++ b/wolfssl/wolfcrypt/kmac.h
+@@ -0,0 +1,71 @@
++/* kmac.h
++ *
++ * Copyright (C) 2006-2026 wolfSSL Inc.
++ *
++ * This file is part of wolfSSL.
++ *
++ * wolfSSL is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * wolfSSL is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
++ */
++
++
++#ifndef WOLF_CRYPT_KMAC_H
++#define WOLF_CRYPT_KMAC_H
++
++#include <wolfssl/wolfcrypt/types.h>
++
++#ifdef WOLFSSL_KMAC
++
++#include <wolfssl/wolfcrypt/sha3.h>
++
++#ifdef __cplusplus
++    extern "C" {
++#endif
++
++typedef enum KmacType {
++    WC_KMAC_128 = 1,
++    WC_KMAC_256 = 2
++} KmacType;
++
++#ifndef WC_KMAC_TYPE_DEFINED
++    typedef struct Kmac Kmac;
++    #define WC_KMAC_TYPE_DEFINED
++#endif
++
++struct Kmac {
++    wc_Sha3 sha3;
++    void*   heap;
++    int     devId;
++    byte    type;
++    byte    isXof;
++    byte    updated;
++    byte    finalized;
++};
++
++WOLFSSL_API int wc_InitKmac(Kmac* kmac, int type,
++                            const byte* key, word32 keyLen,
++                            const byte* custom, word32 customLen,
++                            void* heap, int devId);
++WOLFSSL_API int wc_KmacSetXof(Kmac* kmac, int xof);
++WOLFSSL_API int wc_KmacUpdate(Kmac* kmac, const byte* in, word32 inSz);
++WOLFSSL_API int wc_KmacFinal(Kmac* kmac, byte* out, word32 outSz);
++WOLFSSL_API int wc_KmacFree(Kmac* kmac);
++
++#ifdef __cplusplus
++    } /* extern "C" */
++#endif
++
++#endif /* WOLFSSL_KMAC */
++
++#endif /* WOLF_CRYPT_KMAC_H */
+diff --git a/wolfssl/wolfcrypt/sha3.h b/wolfssl/wolfcrypt/sha3.h
+index 3039137ef..289cbf02c 100644
+--- a/wolfssl/wolfcrypt/sha3.h
++++ b/wolfssl/wolfcrypt/sha3.h
+@@ -235,6 +235,17 @@ WOLFSSL_API void wc_Shake256_Free(wc_Shake* shake);
+ WOLFSSL_API int wc_Shake256_Copy(wc_Shake* src, wc_Sha3* dst);
+ #endif
+ 
++#ifdef WOLFSSL_KMAC
++#ifdef WOLFSSL_SHAKE128
++WOLFSSL_LOCAL int wc_Sha3_cSHAKE128_Final(wc_Shake* shake, byte* hash,
++    word32 hashLen);
++#endif
++#ifdef WOLFSSL_SHAKE256
++WOLFSSL_LOCAL int wc_Sha3_cSHAKE256_Final(wc_Shake* shake, byte* hash,
++    word32 hashLen);
++#endif
++#endif /* WOLFSSL_KMAC */
++
+ #ifdef WOLFSSL_HASH_FLAGS
+     WOLFSSL_API int wc_Sha3_SetFlags(wc_Sha3* sha3, word32 flags);
+     WOLFSSL_API int wc_Sha3_GetFlags(wc_Sha3* sha3, word32* flags);

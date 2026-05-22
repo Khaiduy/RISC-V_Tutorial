@@ -130,3 +130,7 @@
 [submodule "generators/bar-fetchers"]
 	path = generators/bar-fetchers
 	url = https://github.com/ucb-bar/bar-fetchers.git
+[submodule "fpga/sw/edhoc/wolfssl"]
+	path = fpga/sw/edhoc/wolfssl
+	url = https://github.com/wolfSSL/wolfssl.git
+	branch = master
