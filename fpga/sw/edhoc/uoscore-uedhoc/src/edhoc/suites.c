@@ -60,7 +60,7 @@ enum err get_suite(enum suite_label label, struct suite *suite)
 		suite->suite_label = SUITE_4;
 		suite->edhoc_aead = CHACHA20_POLY1305;
 		suite->edhoc_hash = SHA_256;
-		suite->edhoc_mac_len_static_dh = MAC8;
+		suite->edhoc_mac_len_static_dh = MAC16; /* RFC 9528 Table 6: 16 */
 		suite->edhoc_ecdh = X25519;
 		suite->edhoc_sign = EdDSA;
 		suite->app_aead = CHACHA20_POLY1305;
@@ -82,7 +82,7 @@ enum err get_suite(enum suite_label label, struct suite *suite)
 		suite->edhoc_hash = SHA_256;
 		suite->edhoc_mac_len_static_dh = MAC16;
 		suite->edhoc_ecdh = X25519;
-		suite->edhoc_sign = EdDSA;
+		suite->edhoc_sign = ES256;  /* RFC 9528 Table 6: Suite 6 signs with ES256 */
 		suite->app_aead = AES_GCM_128;
 		suite->app_hash = SHA_256;
 		break;
@@ -103,8 +103,8 @@ enum err get_suite(enum suite_label label, struct suite *suite)
 		suite->edhoc_mac_len_static_dh = MAC16;
 		suite->edhoc_ecdh = P384;
 		suite->edhoc_sign = ES384;
-		suite->app_aead = AES_GCM_128;
-		suite->app_hash = SHA_256;
+		suite->app_aead = AES_GCM_256; /* RFC 9528 Table 6: A256GCM */
+		suite->app_hash = SHA_384;     /* RFC 9528 Table 6: SHA-384 */
 		break;
 	case SUITE_25:
 		suite->suite_label = SUITE_25;

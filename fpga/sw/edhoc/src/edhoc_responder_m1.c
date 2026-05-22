@@ -41,7 +41,7 @@ extern void csprng_add_entropy(const uint8_t *data, uint32_t len);
  *============================================================================*/
 
 // Responder's EPHEMERAL private key (Y) - generated per session
-static uint8_t y_r[32];
+static uint8_t y_r[SUITE_DH_LEN];
 
 // Responder's STATIC DH seed - used to derive the actual P-256 or X25519 key pair
 // For X25519: used directly (with clamping) as private key
@@ -51,7 +51,7 @@ static const uint8_t r_sk_seed[] = {
     0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x02
 };
 // Actual static DH private key (may differ from seed for P-256)
-static uint8_t r_sk[32];
+static uint8_t r_sk[SUITE_DH_LEN];
 
 // Initiator's signing seed - used to derive i_sign_pk for peer verification.
 // Must match i_sign_seed in edhoc_initiator_m1.c exactly.
@@ -62,11 +62,11 @@ static const uint8_t i_sign_seed[] = {
 
 // Initiator's Ed25519/ES256 public key - computed at startup via sign_key_gen()
 // using the correct algorithm for the active suite (EdDSA for 0/1/4, ES256 for 2/3/5).
-static uint8_t i_sign_pk[32];
+static uint8_t i_sign_pk[SUITE_SIGN_PK_LEN];
 
 // Public keys (computed at runtime from private keys)
-static uint8_t g_y[32];  // Ephemeral public key = X25519(y_r, basepoint)
-static uint8_t g_r[32];  // Static DH public key = X25519(r_sk, basepoint)
+static uint8_t g_y[SUITE_DH_LEN];  // Ephemeral public key = X25519(y_r, basepoint)
+static uint8_t g_r[SUITE_DH_LEN];  // Static DH public key = X25519(r_sk, basepoint)
 
 // Connection identifier for responder
 static const uint8_t c_r[] = {0x0e}; // C_R = 14
@@ -127,11 +127,11 @@ int main(void) {
     // Pre-provisioning (not timed): derive initiator's signing public key from known seed.
     // Uses the same algorithm as the initiator: EdDSA for suites 0/1/4, ES256 for 2/3/5.
     {
-        uint8_t seed_tmp[32];
+        uint8_t seed_tmp[SUITE_SIGN_SK_LEN];
         uint8_t tmp_sk[SUITE_SIGN_SK_LEN];
         struct byte_array sk_ba = {.ptr = tmp_sk, .len = SUITE_SIGN_SK_LEN};
-        struct byte_array pk_ba = {.ptr = i_sign_pk, .len = 32};
-        memcpy(seed_tmp, i_sign_seed, 32);
+        struct byte_array pk_ba = {.ptr = i_sign_pk, .len = SUITE_SIGN_PK_LEN};
+        memset(seed_tmp, 0, sizeof(seed_tmp)); memcpy(seed_tmp, i_sign_seed, sizeof(i_sign_seed));
         sign_key_gen(SUITE_SIGN_ALG, seed_tmp, &sk_ba, &pk_ba);
         memset(tmp_sk, 0, SUITE_SIGN_SK_LEN);
     }
@@ -139,14 +139,14 @@ int main(void) {
     // Pre-provisioning (not timed): derive static DH keypair from seed.
     // For P-256, r_sk is used directly as the private key scalar.
     // For X25519, r_sk will contain the raw seed (clamping applied internally).
-    memcpy(r_sk, r_sk_seed, 32);
+    memset(r_sk, 0, sizeof(r_sk)); memcpy(r_sk, r_sk_seed, sizeof(r_sk_seed));
     {
-        uint8_t sk_tmp[32];
-        memcpy(sk_tmp, r_sk, 32);
-        struct byte_array sk_ba = {.ptr = sk_tmp, .len = 32};
-        struct byte_array pk_ba = {.ptr = g_r, .len = 32};
+        uint8_t sk_tmp[SUITE_DH_LEN];
+        memcpy(sk_tmp, r_sk, SUITE_DH_LEN);
+        struct byte_array sk_ba = {.ptr = sk_tmp, .len = SUITE_DH_LEN};
+        struct byte_array pk_ba = {.ptr = g_r, .len = SUITE_DH_LEN};
         ephemeral_dh_key_gen(SUITE_ECDH_ALG, 0, &sk_ba, &pk_ba);
-        memset(sk_tmp, 0, 32);
+        memset(sk_tmp, 0, SUITE_DH_LEN);
     }
 
     /* Fold in this board's static DH key so the CSPRNG state is unique per
@@ -171,9 +171,9 @@ int main(void) {
     t_keygen_start = read_cycles();
 #endif
     {
-        struct byte_array sk_ba = {.ptr = y_r, .len = 32};
-        struct byte_array pk_ba = {.ptr = g_y, .len = 32};
-        default_CSPRNG(sk_ba.ptr, 32);
+        struct byte_array sk_ba = {.ptr = y_r, .len = SUITE_DH_LEN};
+        struct byte_array pk_ba = {.ptr = g_y, .len = SUITE_DH_LEN};
+        default_CSPRNG(sk_ba.ptr, SUITE_DH_LEN);
         ephemeral_dh_key_gen(SUITE_ECDH_ALG, 0, &sk_ba, &pk_ba);
     }
 #ifdef TIMING_BREAKDOWN
@@ -183,8 +183,8 @@ int main(void) {
     // Build credentials with the computed public keys
     static const uint8_t kid_r[] = {0x02};
     static const uint8_t kid_i[] = {0x01};
-    cred_r_len = build_ccs_credential(cred_r, "RespM1", kid_r, 1, g_r, 32, SUITE_CRV_DH);
-    cred_i_len = build_ccs_credential(cred_i, "InitM1", kid_i, 1, (uint8_t *)i_sign_pk, 32, SUITE_CRV_SIGN);
+    cred_r_len = build_ccs_credential(cred_r, "RespM1", kid_r, 1, g_r, SUITE_DH_LEN, SUITE_CRV_DH);
+    cred_i_len = build_ccs_credential(cred_i, "InitM1", kid_i, 1, (uint8_t *)i_sign_pk, SUITE_SIGN_PK_LEN, SUITE_CRV_SIGN);
 
 #ifdef DEBUG_PRINT
     kprintf("\r\n=== RESPONDER KEY MATERIAL (M1) ===\r\n");
@@ -253,13 +253,13 @@ int main(void) {
     cred_i_entry.cred.len = cred_i_len;
     // For Method 1, initiator is SK: Ed25519/ES256 verification key goes in 'pk' field
     cred_i_entry.pk.ptr = (uint8_t *)i_sign_pk;
-    cred_i_entry.pk.len = 32;
+    cred_i_entry.pk.len = SUITE_SIGN_PK_LEN;
     struct cred_array cred_i_array = {.len = 1, .ptr = &cred_i_entry};
 
     /*========================================================================
      * RUN EDHOC
      *========================================================================*/
-    uint8_t prk_out_buf[32], err_msg_buf[64];
+    uint8_t prk_out_buf[SUITE_PRK_LEN], err_msg_buf[64];
     struct byte_array prk_out = {.ptr = prk_out_buf, .len = sizeof(prk_out_buf)};
     struct byte_array err_msg = {.ptr = err_msg_buf, .len = sizeof(err_msg_buf)};
 

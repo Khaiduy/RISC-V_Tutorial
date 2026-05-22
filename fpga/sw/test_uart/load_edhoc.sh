@@ -8,9 +8,19 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EDHOC_DIR="$(realpath "$SCRIPT_DIR/../edhoc")"
 
-METHOD="${METHOD:-0}"
+# Positional args: load_edhoc.sh [METHOD] [SUITE]
+METHOD="${1:-${METHOD:-0}}"
+SUITE="${2:-${SUITE:-0}}"
 INITIATOR_ELF="${INITIATOR_ELF:-$EDHOC_DIR/build/edhoc_m${METHOD}_initiator.elf}"
 RESPONDER_ELF="${RESPONDER_ELF:-$EDHOC_DIR/build/edhoc_m${METHOD}_responder.elf}"
+
+# Suite 24 (P-384) and Suite 25 (X448/Ed448) are slow on bare-metal RV32I.
+# P-384 key gen can take several minutes; use 600s per board.
+if [ "$SUITE" = "24" ] || [ "$SUITE" = "25" ]; then
+    BOARD_TIMEOUT=60
+else
+    BOARD_TIMEOUT=60
+fi
 
 INITIATOR_CFG="$SCRIPT_DIR/c232hm_board_initiator.cfg"
 RESPONDER_CFG="$SCRIPT_DIR/c232hm_board_responder.cfg"
@@ -267,8 +277,8 @@ echo "--------------------------------------------------------"
 # Initiator log may be empty for fast methods (e.g. M3, MAC-only) if EDHOC
 # completes before UART capture catches the output.  Use || true so set -e
 # doesn't abort the script; the responder log is the authoritative result.
-wait_for_done "$LOG_DIR/initiator.log" "Initiator" 120 || true
-wait_for_done "$LOG_DIR/responder.log" "Responder" 120
+wait_for_done "$LOG_DIR/initiator.log" "Initiator" $BOARD_TIMEOUT || true
+wait_for_done "$LOG_DIR/responder.log" "Responder" $BOARD_TIMEOUT
 
 kill "$UART_INIT_PID" 2>/dev/null || true
 kill "$UART_RESP_PID" 2>/dev/null || true

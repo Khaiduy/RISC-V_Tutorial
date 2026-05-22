@@ -24,6 +24,7 @@ volatile uint32_t _tb_msg3_cyc = 0;
 #include "common/print_util.h"
 
 #include "edhoc/buffer_sizes.h"
+#include "edhoc/edhoc_error_msg.h"
 #include "edhoc/hkdf_info.h"
 #include "edhoc/messages.h"
 #include "edhoc/okm.h"
@@ -291,40 +292,86 @@ enum err edhoc_initiator_run_extended(
 {
 	struct runtime_context rc = { 0 };
 	runtime_context_init(&rc);
+	enum err r;
 
-	/*create and send message 1*/
+	/*create and send message 1 — local failure, nothing to report on wire */
 #ifdef TIMING_BREAKDOWN
 	{ uint32_t _t0, _t1; _RDC(_t0);
-	TRY(msg1_gen(c, &rc));
+	r = msg1_gen(c, &rc);
 	_RDC(_t1); _tb_msg1_cyc = _t1 - _t0; }
 #else
-	TRY(msg1_gen(c, &rc));
+	r = msg1_gen(c, &rc);
 #endif
-	TRY(tx(c->sock, &rc.msg));
+	if (r != ok) return r;
+	r = tx(c->sock, &rc.msg);
+	if (r != ok) return r;
 
-	/*receive message 2*/
+	/*receive message 2 — may be a wire-format error from responder */
 	PRINT_MSG("waiting to receive message 2...\n");
 	rc.msg.len = sizeof(rc.msg_buf);
-	TRY(rx(c->sock, &rc.msg));
+	r = rx(c->sock, &rc.msg);
+	if (r != ok) return r;
+	if (edhoc_is_error_message(rc.msg.ptr, rc.msg.len)) {
+		if (err_msg && err_msg->ptr && err_msg->len >= rc.msg.len) {
+			memcpy(err_msg->ptr, rc.msg.ptr, rc.msg.len);
+			err_msg->len = rc.msg.len;
+		}
+		return error_message_received;
+	}
 
-	/*create and send message 3*/
+	/*create and send message 3 — process incoming, then build outgoing */
 #ifdef TIMING_BREAKDOWN
 	{ uint32_t _t0, _t1; _RDC(_t0);
-	TRY(msg3_gen(c, &rc, cred_r_array, c_r_bytes, prk_out));
+	r = msg3_gen(c, &rc, cred_r_array, c_r_bytes, prk_out);
 	_RDC(_t1); _tb_msg3_cyc = _t1 - _t0; }
 #else
-	TRY(msg3_gen(c, &rc, cred_r_array, c_r_bytes, prk_out));
+	r = msg3_gen(c, &rc, cred_r_array, c_r_bytes, prk_out);
 #endif
-	TRY(ead_process(c->params_ead_process, &rc.ead));
-	TRY(tx(c->sock, &rc.msg));
+	if (r != ok) {
+		uint8_t ebuf[MSG_MAX_SIZE];
+		uint32_t ebuf_len = 0;
+		int wire = edhoc_map_to_wire_err_code(r);
+		const char *diag = "EDHOC initiator internal error";
+		if (wire == EDHOC_ERR_CODE_UNKNOWN_CRED) {
+			(void)edhoc_build_error_message(ebuf, sizeof(ebuf),
+				wire, NULL, 0, NULL, 0, &ebuf_len);
+		} else {
+			(void)edhoc_build_error_message(ebuf, sizeof(ebuf),
+				EDHOC_ERR_CODE_UNSPECIFIED,
+				diag, 0, NULL, 0, &ebuf_len);
+		}
+		if (ebuf_len > 0) {
+			struct byte_array out = { .ptr = ebuf, .len = ebuf_len };
+			(void)tx(c->sock, &out);
+			if (err_msg && err_msg->ptr && err_msg->len >= ebuf_len) {
+				memcpy(err_msg->ptr, ebuf, ebuf_len);
+				err_msg->len = ebuf_len;
+			}
+		}
+		return r;
+	}
+	r = ead_process(c->params_ead_process, &rc.ead);
+	if (r != ok) return r;
+	r = tx(c->sock, &rc.msg);
+	if (r != ok) return r;
 
-	/*receive message 4*/
+	/*receive message 4 — may be a wire-format error from responder */
 #ifdef MESSAGE_4
 	PRINT_MSG("waiting to receive message 4...\n");
 	rc.msg.len = sizeof(rc.msg_buf);
-	TRY(rx(c->sock, &rc.msg));
-	TRY(msg4_process(&rc));
-	TRY(ead_process(c->params_ead_process, &rc.ead));
+	r = rx(c->sock, &rc.msg);
+	if (r != ok) return r;
+	if (edhoc_is_error_message(rc.msg.ptr, rc.msg.len)) {
+		if (err_msg && err_msg->ptr && err_msg->len >= rc.msg.len) {
+			memcpy(err_msg->ptr, rc.msg.ptr, rc.msg.len);
+			err_msg->len = rc.msg.len;
+		}
+		return error_message_received;
+	}
+	r = msg4_process(&rc);
+	if (r != ok) return r;
+	r = ead_process(c->params_ead_process, &rc.ead);
+	if (r != ok) return r;
 #endif // MESSAGE_4
 	return ok;
 }

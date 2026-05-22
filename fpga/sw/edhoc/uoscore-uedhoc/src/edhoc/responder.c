@@ -23,6 +23,7 @@ volatile uint32_t _tb_msg3proc_cyc = 0;
 #include "common/crypto_wrapper.h"
 #include "common/oscore_edhoc_error.h"
 
+#include "edhoc/edhoc_error_msg.h"
 #include "edhoc/hkdf_info.h"
 #include "edhoc/messages.h"
 #include "edhoc/okm.h"
@@ -139,10 +140,11 @@ static inline bool selected_suite_is_supported(uint8_t selected,
 					       struct byte_array *suites_r)
 {
 	for (uint32_t i = 0; i < suites_r->len; i++) {
-		if (suites_r->ptr[i] == selected)
+		if (suites_r->ptr[i] == selected) {
 			PRINTF("Suite %d will be used in this EDHOC run.\n",
 			       selected);
-		return true;
+			return true;
+		}
 	}
 	return false;
 }
@@ -184,11 +186,15 @@ enum err msg2_gen(struct edhoc_responder_context *c, struct runtime_context *rc,
 
 	TRY(msg1_parse(&rc->msg, &method, &suites_i, &g_x, c_i, &rc->ead));
 
-	// TODO this may be a vulnerability in case suites_i.len is zero
+	if (suites_i.len == 0) {
+		return wrong_parameter;
+	}
 	if (!(selected_suite_is_supported(suites_i.ptr[suites_i.len - 1],
 					  &c->suites_r))) {
-		// TODO implement here the sending of an error message
-		return error_message_sent;
+		/* Surface a real error code; the caller (run_extended) emits
+		 * the RFC §6 wire-format error message with ERR_CODE=2 and
+		 * SUITES_R as ERR_INFO. */
+		return unsupported_cipher_suite;
 	}
 
 	/*get cipher suite*/
@@ -337,6 +343,97 @@ enum err msg4_gen(struct edhoc_responder_context *c, struct runtime_context *rc)
 }
 #endif // MESSAGE_4
 
+/* Encode a suites byte_array (each byte = suite label 0..255) as a CBOR
+ * value usable as ERR_INFO for ERR_CODE=2. Single suite → CBOR int; multiple
+ * → CBOR array of ints. Returns bytes written or 0 on overflow. */
+static uint32_t encode_suites_cbor(uint8_t *buf, uint32_t cap,
+				   const struct byte_array *suites)
+{
+	if (cap < 1 || suites->len == 0) return 0;
+
+	uint32_t pos = 0;
+	if (suites->len > 1) {
+		/* CBOR array(N) header */
+		if (suites->len <= 23) {
+			buf[pos++] = 0x80 | (uint8_t)suites->len;
+		} else if (suites->len <= 0xFF) {
+			if (cap < pos + 2) return 0;
+			buf[pos++] = 0x98;
+			buf[pos++] = (uint8_t)suites->len;
+		} else {
+			return 0;
+		}
+	}
+	for (uint32_t i = 0; i < suites->len; i++) {
+		uint8_t s = suites->ptr[i];
+		if (s <= 23) {
+			if (cap < pos + 1) return 0;
+			buf[pos++] = s;
+		} else {
+			if (cap < pos + 2) return 0;
+			buf[pos++] = 0x18;
+			buf[pos++] = s;
+		}
+	}
+	return pos;
+}
+
+/* Build + transmit a wire-format error message and fill the caller's err_msg
+ * buffer. Returns the original internal err so the caller can propagate. */
+static enum err send_error(
+	struct edhoc_responder_context *c, struct runtime_context *rc,
+	struct byte_array *err_msg, enum err internal,
+	enum err (*tx)(void *sock, struct byte_array *data))
+{
+	int wire = edhoc_map_to_wire_err_code(internal);
+	uint8_t buf[MSG_MAX_SIZE];
+	uint32_t buf_len = 0;
+	enum err r;
+
+	if (wire == EDHOC_ERR_CODE_WRONG_CIPHER_SUITE) {
+		uint8_t info[16];
+		uint32_t info_len = encode_suites_cbor(info, sizeof(info),
+						       &c->suites_r);
+		if (info_len == 0) return internal;
+		r = edhoc_build_error_message(buf, sizeof(buf), wire,
+					      NULL, 0, info, info_len, &buf_len);
+	} else if (wire == EDHOC_ERR_CODE_UNKNOWN_CRED) {
+		r = edhoc_build_error_message(buf, sizeof(buf), wire,
+					      NULL, 0, NULL, 0, &buf_len);
+	} else {
+		const char *diag = "EDHOC responder internal error";
+		r = edhoc_build_error_message(buf, sizeof(buf), wire,
+					      diag, 0, NULL, 0, &buf_len);
+	}
+	if (r != ok) return internal;
+
+	struct byte_array out = { .ptr = buf, .len = buf_len };
+	(void)tx(c->sock, &out);
+
+	if (err_msg && err_msg->ptr && err_msg->len >= buf_len) {
+		memcpy(err_msg->ptr, buf, buf_len);
+		err_msg->len = buf_len;
+	}
+	(void)rc;
+	return internal;
+}
+
+/* On rx, copy a received error message into the caller's err_msg buffer. */
+static void store_received_error(const struct byte_array *msg,
+				 struct byte_array *err_msg)
+{
+	if (!err_msg || !err_msg->ptr || err_msg->len < msg->len) return;
+	memcpy(err_msg->ptr, msg->ptr, msg->len);
+	err_msg->len = msg->len;
+}
+
+#define R_FAIL_AND_SEND(_e)                                                    \
+	do {                                                                   \
+		enum err _r = (_e);                                            \
+		if (_r != ok)                                                  \
+			return send_error(c, &rc, err_msg, _r, tx);            \
+	} while (0)
+
 enum err edhoc_responder_run_extended(
 	struct edhoc_responder_context *c, struct cred_array *cred_i_array,
 	struct byte_array *err_msg, struct byte_array *prk_out,
@@ -347,39 +444,49 @@ enum err edhoc_responder_run_extended(
 {
 	struct runtime_context rc = { 0 };
 	runtime_context_init(&rc);
+	enum err r;
 
-	/*receive message 1*/
+	/*receive message 1 — no error possible here (we are listening) */
 	PRINT_MSG("waiting to receive message 1...\n");
-	TRY(rx(c->sock, &rc.msg));
+	r = rx(c->sock, &rc.msg);
+	if (r != ok) return r;
 
-	/*create and send message 2*/
+	/*create and send message 2 (includes suite-mismatch error path)*/
 #ifdef TIMING_BREAKDOWN
 	{ uint32_t _t0, _t1; _RDC(_t0);
-	TRY(msg2_gen(c, &rc, c_i_bytes));
+	R_FAIL_AND_SEND(msg2_gen(c, &rc, c_i_bytes));
 	_RDC(_t1); _tb_msg2_cyc = _t1 - _t0; }
 #else
-	TRY(msg2_gen(c, &rc, c_i_bytes));
+	R_FAIL_AND_SEND(msg2_gen(c, &rc, c_i_bytes));
 #endif
-	TRY(ead_process(c->params_ead_process, &rc.ead));
-	TRY(tx(c->sock, &rc.msg));
+	R_FAIL_AND_SEND(ead_process(c->params_ead_process, &rc.ead));
+	r = tx(c->sock, &rc.msg);
+	if (r != ok) return r;
 
-	/*receive message 3*/
+	/*receive message 3 (may be an error from initiator) */
 	PRINT_MSG("waiting to receive message 3...\n");
 	rc.msg.len = sizeof(rc.msg_buf);
-	TRY(rx(c->sock, &rc.msg));
+	r = rx(c->sock, &rc.msg);
+	if (r != ok) return r;
+	if (edhoc_is_error_message(rc.msg.ptr, rc.msg.len)) {
+		store_received_error(&rc.msg, err_msg);
+		return error_message_received;
+	}
+
 #ifdef TIMING_BREAKDOWN
 	{ uint32_t _t0, _t1; _RDC(_t0);
-	TRY(msg3_process(c, &rc, cred_i_array, prk_out, initiator_pub_key));
+	R_FAIL_AND_SEND(msg3_process(c, &rc, cred_i_array, prk_out, initiator_pub_key));
 	_RDC(_t1); _tb_msg3proc_cyc = _t1 - _t0; }
 #else
-	TRY(msg3_process(c, &rc, cred_i_array, prk_out, initiator_pub_key));
+	R_FAIL_AND_SEND(msg3_process(c, &rc, cred_i_array, prk_out, initiator_pub_key));
 #endif
-	TRY(ead_process(c->params_ead_process, &rc.ead));
+	R_FAIL_AND_SEND(ead_process(c->params_ead_process, &rc.ead));
 
 	/*create and send message 4*/
 #ifdef MESSAGE_4
-	TRY(msg4_gen(c, &rc));
-	TRY(tx(c->sock, &rc.msg));
+	R_FAIL_AND_SEND(msg4_gen(c, &rc));
+	r = tx(c->sock, &rc.msg);
+	if (r != ok) return r;
 #endif // MESSAGE_4
 	return ok;
 }

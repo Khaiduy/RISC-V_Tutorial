@@ -28,23 +28,34 @@
 #error "EDHOC_CRYPTO_SUITE must be defined by the Makefile"
 #endif
 
-/* --- Curve family flags --- */
+/* --- ECDH curve family flags (per RFC 9528 Table 6) --- */
+/* P-256 ECDH: Suites 2, 3, 5 */
 #if EDHOC_CRYPTO_SUITE == 2 || EDHOC_CRYPTO_SUITE == 3 || EDHOC_CRYPTO_SUITE == 5
 #define SUITE_USES_P256   1
 #else
 #define SUITE_USES_P256   0
 #endif
 
+/* P-384 ECDH + ES384 sign: Suite 24 */
 #if EDHOC_CRYPTO_SUITE == 24
 #define SUITE_USES_P384   1
 #else
 #define SUITE_USES_P384   0
 #endif
 
+/* X448 ECDH + Ed448 sign: Suite 25 */
 #if EDHOC_CRYPTO_SUITE == 25
 #define SUITE_USES_X448   1
 #else
 #define SUITE_USES_X448   0
+#endif
+
+/* ES256 signing: Suites 2, 3, 5, 6 (Suite 6 is the mixed case — X25519 ECDH + ES256 sign per RFC 9528 Table 6) */
+#if EDHOC_CRYPTO_SUITE == 2 || EDHOC_CRYPTO_SUITE == 3 || \
+    EDHOC_CRYPTO_SUITE == 5 || EDHOC_CRYPTO_SUITE == 6
+#define SUITE_USES_ES256  1
+#else
+#define SUITE_USES_ES256  0
 #endif
 
 /* --- ECDH algorithm --- */
@@ -65,7 +76,7 @@
 #elif SUITE_USES_X448
 #define SUITE_SIGN_ALG    Ed448
 #define SUITE_SIGN_SK_LEN 57
-#elif SUITE_USES_P256
+#elif SUITE_USES_ES256
 #define SUITE_SIGN_ALG    ES256
 #define SUITE_SIGN_SK_LEN 32
 #else
@@ -83,15 +94,18 @@
 #elif SUITE_USES_P256
 #define SUITE_CRV_DH      1   /* P-256 */
 #define SUITE_CRV_SIGN    1   /* P-256 */
+#elif SUITE_USES_ES256        /* Suite 6: X25519 ECDH + P-256 sign */
+#define SUITE_CRV_DH      4   /* X25519 */
+#define SUITE_CRV_SIGN    1   /* P-256 */
 #else
 #define SUITE_CRV_DH      4   /* X25519 */
 #define SUITE_CRV_SIGN    6   /* Ed25519 */
 #endif
 
-/* --- ECC (P-256 or P-384 projective arithmetic) --- */
-#define SUITE_USES_ECC (SUITE_USES_P256 || SUITE_USES_P384)
+/* --- ECC (P-256 or P-384 projective arithmetic needed) --- */
+#define SUITE_USES_ECC (SUITE_USES_P256 || SUITE_USES_P384 || SUITE_USES_ES256)
 
-/* --- Ed25519 (suites not using ECC or X448) --- */
+/* --- Ed25519 (suites that sign with EdDSA-Ed25519) --- */
 #define SUITE_USES_ED25519 (!SUITE_USES_ECC && !SUITE_USES_X448)
 
 /* --- DH key size (private and public, raw bytes) --- */
@@ -103,7 +117,7 @@
 #define SUITE_DH_LEN    32
 #endif
 
-/* --- Signing public key size --- */
+/* --- Signing public key size (compact / raw X for EC2) --- */
 #if SUITE_USES_P384
 #define SUITE_SIGN_PK_LEN  48
 #elif SUITE_USES_X448
@@ -114,9 +128,11 @@
 
 /* --- PRK_out / hash output size --- */
 #if EDHOC_CRYPTO_SUITE == 24
-#define SUITE_PRK_LEN   48
+#define SUITE_PRK_LEN   48      /* SHA-384 = 48 bytes */
+#elif EDHOC_CRYPTO_SUITE == 25
+#define SUITE_PRK_LEN   64      /* RFC 9528 §4.1.1: KMAC256 output = 64 bytes */
 #else
-#define SUITE_PRK_LEN   32
+#define SUITE_PRK_LEN   32      /* SHA-256 = 32 bytes */
 #endif
 
 /* --- ChaCha20/Poly1305 --- */

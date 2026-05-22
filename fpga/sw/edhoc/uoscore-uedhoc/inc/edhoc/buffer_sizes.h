@@ -76,7 +76,9 @@
 #define AEAD_IV_SIZE     12
 #define SIG_OR_MAC_SIZE  96
 #elif EDHOC_CRYPTO_SUITE == 25
-/* Suite 25: X448 / Ed448 / ChaCha20 / SHAKE-256 */
+/* Suite 25: X448 / Ed448 / ChaCha20 / SHAKE-256.
+ * RFC 9528 §4.1.1: SHAKE256 EDHOC_Extract = KMAC256(salt, IKM, 512, "")
+ * → PRK/TH/SALT length = 64 bytes (512 bits). */
 #define PK_SIZE          57
 #define G_Y_SIZE         56
 #define G_X_SIZE         56
@@ -84,7 +86,7 @@
 #define G_I_SIZE         56
 #define SIGNATURE_SIZE  114
 #define ECDH_SECRET_SIZE 56
-#define PRK_SIZE         32
+#define PRK_SIZE         64
 #define HASH_SIZE        64
 #define AEAD_IV_SIZE     12
 #define SIG_OR_MAC_SIZE 114
@@ -101,6 +103,19 @@
 #define PRK_SIZE         32
 #define HASH_SIZE        32
 #define AEAD_IV_SIZE     12
+#define SIG_OR_MAC_SIZE  64
+#elif defined(EDHOC_CRYPTO_SUITE) && EDHOC_CRYPTO_SUITE == 7
+/* Suite 7 (extension): Ascon-AEAD-128 + Ascon-Hash256 + X25519 + Ed25519. Ascon IV=16. */
+#define PK_SIZE          32
+#define G_Y_SIZE         32
+#define G_X_SIZE         32
+#define G_R_SIZE         32
+#define G_I_SIZE         32
+#define SIGNATURE_SIZE   64
+#define ECDH_SECRET_SIZE 32
+#define PRK_SIZE         32
+#define HASH_SIZE        32
+#define AEAD_IV_SIZE     16
 #define SIG_OR_MAC_SIZE  64
 #else
 /* Suites 0-3 (default): AES-CCM (IV=13) */
@@ -119,7 +134,12 @@
 
 #define MAC_SIZE 16
 #define MAC23_SIZE 32
-#define AAD_SIZE 45
+/* AAD = array(3) + text("Encrypt0") + bstr(empty) + bstr(thX).
+ * text("Encrypt0") = 1 (header) + 8 (chars) = 9 bytes.
+ * bstr(thX) = BSTR_ENCODING_OVERHEAD(HASH_SIZE) + HASH_SIZE.
+ * Total = 1 (array) + 9 (text) + 1 (protected bstr) + 2 (overhead) + HASH_SIZE = 13 + HASH_SIZE.
+ * For suites 0-6 (SHA-256, HASH_SIZE=32): 45. Suites 24 (48): 61. Suite 25 (64): 77. */
+#define AAD_SIZE (13 + HASH_SIZE)
 #define KID_SIZE 8
 /* Default SIG_OR_MAC_SIZE for suites 0-6 (64 bytes = Ed25519/ES256 sig).
  * Suites 24 (96) and 25 (114) define larger values above; guard prevents

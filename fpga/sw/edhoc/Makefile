@@ -93,6 +93,7 @@ _WC_CORE = \
 _WC_SHA512   = $(WOLFCRYPT_DIR)/sha512.c
 # SHA-3 / SHAKE-256: Suite 25 only
 _WC_SHA3     = $(WOLFCRYPT_DIR)/sha3.c
+_WC_KMAC     = $(WOLFCRYPT_DIR)/kmac.c
 
 # AEAD
 _WC_AES      = $(WOLFCRYPT_DIR)/aes.c
@@ -144,8 +145,10 @@ ifeq ($(CRYPTO_SUITE),5)
 WOLFCRYPT_SRCS = $(_WC_CORE) $(_WC_CHACHA) $(_WC_ECC)
 endif
 ifeq ($(CRYPTO_SUITE),6)
-# Suite 6: AES-128-GCM + SHA-256 + SHA-512 + X25519
-WOLFCRYPT_SRCS = $(_WC_CORE) $(_WC_SHA512) $(_WC_AES) $(_WC_X25519)
+# Suite 6 (RFC 9528 Table 6): A128GCM + SHA-256 + X25519 ECDH + ES256 sign.
+# Needs X25519 (curve25519.c) for ECDH + ECC (ecc.c) for ES256 sign/verify.
+# SHA-512 is pulled in by wolfSSL aes.c/sha256.c internal paths when HAVE_ECC is set.
+WOLFCRYPT_SRCS = $(_WC_CORE) $(_WC_SHA512) $(_WC_AES) $(_WC_X25519) $(_WC_ECC)
 endif
 ifeq ($(CRYPTO_SUITE),7)
 # Suite 7: Ascon-AEAD-128 + Ascon-Hash256 + SHA-512 + X25519
@@ -156,15 +159,17 @@ ifeq ($(CRYPTO_SUITE),24)
 WOLFCRYPT_SRCS = $(_WC_CORE) $(_WC_SHA512) $(_WC_AES) $(_WC_ECC)
 endif
 ifeq ($(CRYPTO_SUITE),25)
-# Suite 25: ChaCha20/Poly1305 + SHAKE-256 + X448
-WOLFCRYPT_SRCS = $(_WC_CORE) $(_WC_SHA3) $(_WC_CHACHA) $(_WC_X448)
+# Suite 25: ChaCha20/Poly1305 + SHAKE-256 + X448 + Ed448 (Ed448 needs SHA-512).
+# KMAC256 is required by RFC 9528 §4.1.1 for EDHOC_Extract/Expand.
+WOLFCRYPT_SRCS = $(_WC_CORE) $(_WC_SHA512) $(_WC_SHA3) $(_WC_KMAC) $(_WC_CHACHA) $(_WC_X448)
 endif
 
 # Sign: Edwards-curve sign/verify — excluded for Method 3 (StaticDH/StaticDH).
-# ECC suites (2,3,5,24) need no separate sign sources; P-256/P-384 in _WC_ECC
-# already provides DHE + ECDSA sign/verify.
+# ECC suites (2,3,5,6,24) need no separate sign sources; P-256/P-384 in _WC_ECC
+# already provides ECDSA sign/verify.
+# RFC 9528 Table 6: Suite 6 signs with ES256, not Ed25519, despite using X25519 ECDH.
 WOLFCRYPT_SIGN_SRCS =
-ifneq ($(filter $(CRYPTO_SUITE),0 1 4 6 7),)
+ifneq ($(filter $(CRYPTO_SUITE),0 1 4 7),)
 WOLFCRYPT_SIGN_SRCS = $(_WC_ED25519)
 endif
 ifeq ($(CRYPTO_SUITE),25)
@@ -414,6 +419,54 @@ M_ED25519_SRC =
 # M3 (SDHK-SDHK): neither role signs or verifies Ed25519.
 M3_CRYPTO_SRC        = $(WOLFCRYPT_SRCS) $(WOLFCRYPT_SIGN_SRCS)
 M3_CRYPTO_SRC_NOSIGN = $(WOLFCRYPT_SRCS)
+
+# ============================================================================
+# EDHOC PSK (Method 4) - separate library uoscore-uedhoc-psk/
+# Crypto backend: wolfcrypt (shared with the standard library — uoscore-uedhoc/wolfssl).
+# Suite 7 (X25519 + Ascon) is the primary target; Suite 0 also supported.
+# ============================================================================
+PSK_EDHOC_LIB     = uoscore-uedhoc-psk
+
+# wolfcrypt source set: reuse per-suite WOLFCRYPT_SRCS variable already gated by CRYPTO_SUITE
+# upstream in this Makefile (Suite 7 → Ascon+X25519, Suite 0 → AES+X25519, etc.)
+PSK_WOLFCRYPT_SRCS = $(WOLFCRYPT_SRCS)
+
+PSK_COMMON_SRC    = src/kprintf.c src/libc_stubs.c src/csprng_stub.c
+PSK_COMMON_SRC   += src/edhoc_transport.c src/rng_port.c
+PSK_COMMON_SRC   += $(PSK_EDHOC_LIB)/externals/zcbor/src/zcbor_common.c
+PSK_COMMON_SRC   += $(PSK_EDHOC_LIB)/externals/zcbor/src/zcbor_encode.c
+PSK_COMMON_SRC   += $(PSK_EDHOC_LIB)/externals/zcbor/src/zcbor_decode.c
+
+PSK_INCLUDES  = -I. -Iinclude -I$(PSK_EDHOC_LIB)/inc
+PSK_INCLUDES += -I$(PSK_EDHOC_LIB)/inc/edhoc
+PSK_INCLUDES += -I$(PSK_EDHOC_LIB)/inc/common
+PSK_INCLUDES += -I$(PSK_EDHOC_LIB)/externals/zcbor/include
+PSK_INCLUDES += -I$(WOLFSSL_ROOT)
+
+# Extra defines for PSK lib build (overrides PSK lib's default TinyCrypt/ASCON gates).
+PSK_LIB_CFLAGS = $(CFLAGS) $(WOLFCRYPT_CFLAGS)
+
+edhoc_psk_initiator:
+	@echo "Building EDHOC PSK Initiator (Method 4, CRYPTO_SUITE=$(CRYPTO_SUITE), wolfcrypt backend)..."
+	-@$(MAKE) -C $(PSK_EDHOC_LIB) clean
+	@$(MAKE) -C $(PSK_EDHOC_LIB) CC="$(CC)" AR="$(AR)" CFLAGS="$(PSK_LIB_CFLAGS)" CRYPTO_SUITE=$(CRYPTO_SUITE)
+	@echo "Building PSK initiator app (Suite $(CRYPTO_SUITE))..."
+	@$(MAKE) all TARGET=edhoc_psk_initiator EDHOC_LIB_DIR=$(PSK_EDHOC_LIB) \
+		C_SOURCES="src/edhoc_initiator_psk.c $(PSK_COMMON_SRC) $(PSK_WOLFCRYPT_SRCS)" \
+		ASM_SOURCES="src/crt0.S" \
+		INCLUDES="$(PSK_INCLUDES)" EDHOC_MODE=psk \
+		"CFLAGS=$(CFLAGS) $(WOLFCRYPT_CFLAGS)"
+
+edhoc_psk_responder:
+	@echo "Building EDHOC PSK Responder (Method 4, CRYPTO_SUITE=$(CRYPTO_SUITE), wolfcrypt backend)..."
+	-@$(MAKE) -C $(PSK_EDHOC_LIB) clean
+	@$(MAKE) -C $(PSK_EDHOC_LIB) CC="$(CC)" AR="$(AR)" CFLAGS="$(PSK_LIB_CFLAGS)" CRYPTO_SUITE=$(CRYPTO_SUITE)
+	@echo "Building PSK responder app (Suite $(CRYPTO_SUITE))..."
+	@$(MAKE) all TARGET=edhoc_psk_responder EDHOC_LIB_DIR=$(PSK_EDHOC_LIB) \
+		C_SOURCES="src/edhoc_responder_psk.c $(PSK_COMMON_SRC) $(PSK_WOLFCRYPT_SRCS)" \
+		ASM_SOURCES="src/crt0.S" \
+		INCLUDES="$(PSK_INCLUDES)" EDHOC_MODE=psk \
+		"CFLAGS=$(CFLAGS) $(WOLFCRYPT_CFLAGS)"
 
 # Method 3 includes — wolfSSL only
 M3_INCLUDES = -I. -Iinclude -I$(M3_EDHOC_LIB)/inc

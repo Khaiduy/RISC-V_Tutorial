@@ -37,6 +37,9 @@ struct edhoc_mock_cb edhoc_crypto_mock_cb;
 #include <wolfssl/wolfcrypt/sha512.h>
 #include <wolfssl/wolfcrypt/sha3.h>
 #include <wolfssl/wolfcrypt/hmac.h>
+#if EDHOC_CRYPTO_SUITE == 25
+#include <wolfssl/wolfcrypt/kmac.h>
+#endif
 #include <wolfssl/wolfcrypt/kdf.h>
 #include <wolfssl/wolfcrypt/hash.h>
 #include <wolfssl/wolfcrypt/curve25519.h>
@@ -60,7 +63,7 @@ struct edhoc_mock_cb edhoc_crypto_mock_cb;
  * Guards below prevent dead ECC/Ed448/hash branches from being compiled,
  * allowing --gc-sections to remove unreferenced wolfCrypt code. */
 #if EDHOC_CRYPTO_SUITE == 2 || EDHOC_CRYPTO_SUITE == 3 || EDHOC_CRYPTO_SUITE == 5
-#  define _SUITE_USES_P256 1
+#  define _SUITE_USES_P256 1   /* P-256 for ECDH */
 #else
 #  define _SUITE_USES_P256 0
 #endif
@@ -74,7 +77,15 @@ struct edhoc_mock_cb edhoc_crypto_mock_cb;
 #else
 #  define _SUITE_USES_X448 0
 #endif
-#define _SUITE_USES_ECC (_SUITE_USES_P256 || _SUITE_USES_P384)
+/* ES256 for signing — Suites 2/3/5 (with P-256 ECDH) and Suite 6 (with X25519 ECDH).
+ * Per RFC 9528 Table 6, Suite 6 is the mixed case. */
+#if EDHOC_CRYPTO_SUITE == 2 || EDHOC_CRYPTO_SUITE == 3 || \
+    EDHOC_CRYPTO_SUITE == 5 || EDHOC_CRYPTO_SUITE == 6
+#  define _SUITE_USES_ES256 1
+#else
+#  define _SUITE_USES_ES256 0
+#endif
+#define _SUITE_USES_ECC (_SUITE_USES_P256 || _SUITE_USES_P384 || _SUITE_USES_ES256)
 #endif /* WOLFCRYPT */
 
 #ifdef EDHOC_MOCK_CRYPTO_WRAPPER
@@ -356,7 +367,7 @@ enum err WEAK sign(enum sign_alg alg, const struct byte_array *sk,
 		return ok;
 	}
 #endif /* HAVE_ED25519_SIGN */
-#if _SUITE_USES_P256
+#if _SUITE_USES_ES256 && defined(HAVE_ECC_SIGN)
 	if (alg == ES256) {
 		/* sp_ecc_sign_256 is LTO-eliminated when called indirectly through
 		 * wc_ecc_sign_hash_ex.  Declare and call it directly so the linker
@@ -385,8 +396,8 @@ enum err WEAK sign(enum sign_alg alg, const struct byte_array *sk,
 		wc_ecc_free(&wc_key);
 		return ok;
 	}
-#endif /* _SUITE_USES_P256 */
-#if _SUITE_USES_P384
+#endif /* _SUITE_USES_ES256 && HAVE_ECC_SIGN */
+#if _SUITE_USES_P384 && defined(HAVE_ECC_SIGN)
 	if (alg == ES384) {
 		ecc_key wc_key;
 		mp_int r, s;
@@ -408,8 +419,8 @@ enum err WEAK sign(enum sign_alg alg, const struct byte_array *sk,
 		wc_ecc_free(&wc_key);
 		return ok;
 	}
-#endif /* _SUITE_USES_P384 */
-#if _SUITE_USES_X448
+#endif /* _SUITE_USES_P384 && HAVE_ECC_SIGN */
+#if _SUITE_USES_X448 && defined(HAVE_ED448) && !defined(NO_ED448_SIGN)
 	if (alg == Ed448) {
 		ed448_key wc_key;
 		word32 sig_len = 114;
@@ -421,7 +432,7 @@ enum err WEAK sign(enum sign_alg alg, const struct byte_array *sk,
 		wc_ed448_free(&wc_key);
 		return ok;
 	}
-#endif /* _SUITE_USES_X448 */
+#endif /* _SUITE_USES_X448 && HAVE_ED448 && !NO_ED448_SIGN */
 #endif /* WOLFCRYPT */
 	return unsupported_ecdh_curve;
 }
@@ -440,7 +451,7 @@ enum err WEAK verify(enum sign_alg alg, const struct byte_array *pk,
 #endif
 
 #ifdef WOLFCRYPT
-#ifdef HAVE_ED25519
+#if defined(HAVE_ED25519) && !defined(NO_ED25519_VERIFY)
 	if (alg == EdDSA) {
 		ed25519_key key;
 		int verified = 0;
@@ -452,56 +463,68 @@ enum err WEAK verify(enum sign_alg alg, const struct byte_array *pk,
 		wc_ed25519_free(&key);
 		return ok;
 	}
-#endif /* HAVE_ED25519 */
-#if _SUITE_USES_P256
+#endif /* HAVE_ED25519 && !NO_ED25519_VERIFY */
+#if _SUITE_USES_ES256 && defined(HAVE_ECC_VERIFY)
 	if (alg == ES256) {
+		/* CCS credentials store only X — try Y=even (0x02), fall back to Y=odd (0x03). */
 		ecc_key wc_key;
 		mp_int r, s;
 		byte hash[32];
 		byte compressed[33];
 		int stat = 0;
-		compressed[0] = 0x02;
-		memcpy(compressed + 1, pk->ptr, 32);
-		wc_ecc_init(&wc_key);
-		wc_ecc_import_x963_ex(compressed, 33, &wc_key, ECC_SECP256R1);
 		wc_Sha256Hash(msg->ptr, msg->len, hash);
 		mp_init(&r);
 		mp_init(&s);
 		mp_read_unsigned_bin(&r, sgn->ptr, 32);
 		mp_read_unsigned_bin(&s, sgn->ptr + 32, 32);
-		wc_ecc_verify_hash_ex(&r, &s, hash, 32, &stat, &wc_key);
+		memcpy(compressed + 1, pk->ptr, 32);
+		for (int parity = 0; parity < 2 && stat != 1; parity++) {
+			compressed[0] = (parity == 0) ? 0x02 : 0x03;
+			wc_ecc_init(&wc_key);
+			if (wc_ecc_import_x963_ex(compressed, 33, &wc_key,
+						  ECC_SECP256R1) == 0) {
+				wc_ecc_verify_hash_ex(&r, &s, hash, 32, &stat,
+						      &wc_key);
+			}
+			wc_ecc_free(&wc_key);
+		}
 		*result = (stat == 1);
 		mp_clear(&r);
 		mp_clear(&s);
-		wc_ecc_free(&wc_key);
 		return ok;
 	}
-#endif /* _SUITE_USES_P256 */
-#if _SUITE_USES_P384
+#endif /* _SUITE_USES_ES256 && HAVE_ECC_VERIFY */
+#if _SUITE_USES_P384 && defined(HAVE_ECC_VERIFY)
 	if (alg == ES384) {
+		/* CCS credentials store only X — try Y=even (0x02), fall back to Y=odd (0x03). */
 		ecc_key wc_key;
 		mp_int r, s;
 		byte hash[48];
 		byte compressed[49];
 		int stat = 0;
-		compressed[0] = 0x02;
-		memcpy(compressed + 1, pk->ptr, 48);
-		wc_ecc_init(&wc_key);
-		wc_ecc_import_x963_ex(compressed, 49, &wc_key, ECC_SECP384R1);
 		wc_Sha384Hash(msg->ptr, msg->len, hash);
 		mp_init(&r);
 		mp_init(&s);
 		mp_read_unsigned_bin(&r, sgn->ptr, 48);
 		mp_read_unsigned_bin(&s, sgn->ptr + 48, 48);
-		wc_ecc_verify_hash_ex(&r, &s, hash, 48, &stat, &wc_key);
+		memcpy(compressed + 1, pk->ptr, 48);
+		for (int parity = 0; parity < 2 && stat != 1; parity++) {
+			compressed[0] = (parity == 0) ? 0x02 : 0x03;
+			wc_ecc_init(&wc_key);
+			if (wc_ecc_import_x963_ex(compressed, 49, &wc_key,
+						  ECC_SECP384R1) == 0) {
+				wc_ecc_verify_hash_ex(&r, &s, hash, 48, &stat,
+						      &wc_key);
+			}
+			wc_ecc_free(&wc_key);
+		}
 		*result = (stat == 1);
 		mp_clear(&r);
 		mp_clear(&s);
-		wc_ecc_free(&wc_key);
 		return ok;
 	}
-#endif /* _SUITE_USES_P384 */
-#if _SUITE_USES_X448
+#endif /* _SUITE_USES_P384 && HAVE_ECC_VERIFY */
+#if _SUITE_USES_X448 && defined(HAVE_ED448) && !defined(NO_ED448_VERIFY)
 	if (alg == Ed448) {
 		ed448_key wc_key;
 		int verified = 0;
@@ -514,7 +537,7 @@ enum err WEAK verify(enum sign_alg alg, const struct byte_array *pk,
 		wc_ed448_free(&wc_key);
 		return ok;
 	}
-#endif /* _SUITE_USES_X448 */
+#endif /* _SUITE_USES_X448 && HAVE_ED448 && !NO_ED448_VERIFY */
 #endif /* WOLFCRYPT */
 	return crypto_operation_not_implemented;
 }
@@ -555,17 +578,26 @@ enum err WEAK hkdf_extract(enum hash_alg alg, const struct byte_array *salt,
 #endif /* EDHOC_CRYPTO_SUITE == 24 */
 #if EDHOC_CRYPTO_SUITE == 25
 	if (alg == SHAKE_256) {
-		/* HMAC-SHA3-256 approximation for HMAC-SHAKE-256 */
-		Hmac hmac;
-		uint8_t zero_salt[32] = { 0 };
+		/* RFC 9528 §4.1.1: EDHOC_Extract(salt, IKM) = KMAC256(salt, IKM, 512, "")
+		 * Output length = 64 bytes (512 bits). */
+		Kmac kmac;
+		uint8_t zero_salt[64] = { 0 };
 		const uint8_t *s =
 			(salt->ptr && salt->len) ? salt->ptr : zero_salt;
 		word32 s_len = (salt->ptr && salt->len) ?
-				       (word32)salt->len : 32;
-		wc_HmacSetKey(&hmac, WC_SHA3_256, s, s_len);
-		wc_HmacUpdate(&hmac, ikm->ptr, ikm->len);
-		wc_HmacFinal(&hmac, out);
-		wc_HmacFree(&hmac);
+				       (word32)salt->len : 64;
+		if (wc_InitKmac(&kmac, WC_KMAC_256, s, s_len,
+				NULL, 0, NULL, INVALID_DEVID) != 0)
+			return hkdf_failed;
+		if (wc_KmacUpdate(&kmac, ikm->ptr, ikm->len) != 0) {
+			wc_KmacFree(&kmac);
+			return hkdf_failed;
+		}
+		if (wc_KmacFinal(&kmac, out, 64) != 0) {
+			wc_KmacFree(&kmac);
+			return hkdf_failed;
+		}
+		wc_KmacFree(&kmac);
 		return ok;
 	}
 #endif /* EDHOC_CRYPTO_SUITE == 25 */
@@ -607,26 +639,21 @@ enum err WEAK hkdf_expand(enum hash_alg alg, const struct byte_array *prk,
 #endif /* EDHOC_CRYPTO_SUITE == 24 */
 #if EDHOC_CRYPTO_SUITE == 25
 	if (alg == SHAKE_256) {
-		/* HMAC-SHA3-256 approximation: manual HKDF-Expand loop */
-		uint32_t hash_len = 32;
-		uint32_t iterations = (out->len + hash_len - 1) / hash_len;
-		if (iterations > 255)
+		/* RFC 9528 §4.1.2: EDHOC_Expand(PRK, info, length) = KMAC256(PRK, info, 8*length, "")
+		 * KMAC supplies the exact requested output length directly — no expand loop. */
+		Kmac kmac;
+		if (wc_InitKmac(&kmac, WC_KMAC_256, prk->ptr, prk->len,
+				NULL, 0, NULL, INVALID_DEVID) != 0)
 			return hkdf_failed;
-		uint8_t t[32] = { 0 };
-		Hmac hmac;
-		for (uint8_t i = 1; i <= iterations; i++) {
-			wc_HmacSetKey(&hmac, WC_SHA3_256,
-				      prk->ptr, prk->len);
-			if (i > 1)
-				wc_HmacUpdate(&hmac, t, hash_len);
-			wc_HmacUpdate(&hmac, info->ptr, info->len);
-			wc_HmacUpdate(&hmac, &i, 1);
-			wc_HmacFinal(&hmac, t);
-			wc_HmacFree(&hmac);
-			uint32_t copy = (out->len < (uint32_t)i * hash_len) ?
-					(out->len % hash_len) : hash_len;
-			memcpy(&out->ptr[(i - 1) * hash_len], t, copy);
+		if (wc_KmacUpdate(&kmac, info->ptr, info->len) != 0) {
+			wc_KmacFree(&kmac);
+			return hkdf_failed;
 		}
+		if (wc_KmacFinal(&kmac, out->ptr, out->len) != 0) {
+			wc_KmacFree(&kmac);
+			return hkdf_failed;
+		}
+		wc_KmacFree(&kmac);
 		return ok;
 	}
 #endif /* EDHOC_CRYPTO_SUITE == 25 */
@@ -739,17 +766,38 @@ enum err WEAK shared_secret_derive(enum ecdh_alg alg,
 		byte compressed[49];
 		word32 secret_len = 48;
 		WC_RNG rng;
+		int r384;
 		compressed[0] = 0x02;
 		memcpy(compressed + 1, pk->ptr, 48);
 		wc_ecc_init(&priv_key);
 		wc_ecc_init(&pub_key);
 		wc_InitRng(&rng);
 		wc_ecc_set_rng(&priv_key, &rng);
-		wc_ecc_import_private_key_ex(sk->ptr, sk->len, NULL, 0,
-					     &priv_key, ECC_SECP384R1);
-		wc_ecc_import_x963_ex(compressed, 49, &pub_key, ECC_SECP384R1);
-		wc_ecc_shared_secret(&priv_key, &pub_key,
-				     shared_secret, &secret_len);
+		r384 = wc_ecc_import_private_key_ex(sk->ptr, sk->len, NULL, 0,
+						    &priv_key, ECC_SECP384R1);
+		if (r384 != 0) {
+			handle_external_runtime_error(r384, "crypto_wrapper.c(p384_import_sk)", 0);
+			wc_FreeRng(&rng); wc_ecc_free(&priv_key); wc_ecc_free(&pub_key);
+			return unexpected_result_from_ext_lib;
+		}
+		r384 = wc_ecc_import_x963_ex(compressed, 49, &pub_key, ECC_SECP384R1);
+		if (r384 != 0) {
+			/* Try odd-Y prefix — shared secret X-coord is the same either way */
+			compressed[0] = 0x03;
+			r384 = wc_ecc_import_x963_ex(compressed, 49, &pub_key, ECC_SECP384R1);
+		}
+		if (r384 != 0) {
+			handle_external_runtime_error(r384, "crypto_wrapper.c(p384_import_pk)", 0);
+			wc_FreeRng(&rng); wc_ecc_free(&priv_key); wc_ecc_free(&pub_key);
+			return unexpected_result_from_ext_lib;
+		}
+		r384 = wc_ecc_shared_secret(&priv_key, &pub_key,
+					    shared_secret, &secret_len);
+		if (r384 != 0) {
+			handle_external_runtime_error(r384, "crypto_wrapper.c(p384_ecdh)", 0);
+			wc_FreeRng(&rng); wc_ecc_free(&priv_key); wc_ecc_free(&pub_key);
+			return unexpected_result_from_ext_lib;
+		}
 		wc_FreeRng(&rng);
 		wc_ecc_free(&priv_key);
 		wc_ecc_free(&pub_key);
@@ -837,18 +885,34 @@ enum err WEAK ephemeral_dh_key_gen(enum ecdh_alg alg, uint32_t seed,
 #endif /* WOLFCRYPT && _SUITE_USES_P256 */
 #if defined(WOLFCRYPT) && _SUITE_USES_P384
 	if (alg == P384) {
-		WC_RNG rng;
+		/* sk->ptr pre-filled with 48 bytes of CSPRNG output by caller. */
 		ecc_key key;
 		byte pub97[97];
 		word32 pub_len = sizeof(pub97);
 		word32 sk_len = 48;
+		int r384;
 		wc_ecc_init(&key);
-		wc_InitRng(&rng);
-		wc_ecc_make_key_ex(&rng, 48, &key, ECC_SECP384R1);
-		wc_FreeRng(&rng);
+		r384 = wc_ecc_import_private_key_ex(sk->ptr, 48, NULL, 0,
+						    &key, ECC_SECP384R1);
+		if (r384 != 0) {
+			handle_external_runtime_error(r384, "crypto_wrapper.c(p384_keygen_import)", 0);
+			wc_ecc_free(&key);
+			return unexpected_result_from_ext_lib;
+		}
+		r384 = wc_ecc_make_pub(&key, NULL);
+		if (r384 != 0) {
+			handle_external_runtime_error(r384, "crypto_wrapper.c(p384_make_pub)", 0);
+			wc_ecc_free(&key);
+			return unexpected_result_from_ext_lib;
+		}
 		wc_ecc_export_private_only(&key, sk->ptr, &sk_len);
 		sk->len = (uint32_t)sk_len;
-		wc_ecc_export_x963(&key, pub97, &pub_len);
+		r384 = wc_ecc_export_x963(&key, pub97, &pub_len);
+		if (r384 != 0) {
+			handle_external_runtime_error(r384, "crypto_wrapper.c(p384_export_pub)", 0);
+			wc_ecc_free(&key);
+			return unexpected_result_from_ext_lib;
+		}
 		memcpy(pk->ptr, pub97 + 1, 48);
 		pk->len = 48;
 		wc_ecc_free(&key);
@@ -857,18 +921,19 @@ enum err WEAK ephemeral_dh_key_gen(enum ecdh_alg alg, uint32_t seed,
 #endif /* WOLFCRYPT && _SUITE_USES_P384 */
 #if defined(WOLFCRYPT) && _SUITE_USES_X448
 	if (alg == X448) {
-		WC_RNG rng;
+		/* sk->ptr pre-filled with 56 bytes of CSPRNG output by caller.
+		 * Apply RFC 7748 §5 clamping so the keygen result matches what
+		 * wc_curve448_import_private_ex produces during shared-secret derive. */
+		sk->ptr[0]  &= 0xfc;
+		sk->ptr[55] |= 0x80;
 		curve448_key key;
-		word32 sk_len = 56, pk_len = 56;
+		word32 pk_len = 56;
 		wc_curve448_init(&key);
-		wc_InitRng(&rng);
-		wc_curve448_make_key(&rng, 56, &key);
-		wc_FreeRng(&rng);
-		wc_curve448_export_private_raw_ex(&key, sk->ptr, &sk_len,
-						  EC448_LITTLE_ENDIAN);
-		sk->len = (uint32_t)sk_len;
+		wc_curve448_import_private_ex(sk->ptr, 56, &key,
+					      EC448_LITTLE_ENDIAN);
 		wc_curve448_export_public_ex(&key, pk->ptr, &pk_len,
 					     EC448_LITTLE_ENDIAN);
+		sk->len = 56;
 		pk->len = (uint32_t)pk_len;
 		wc_curve448_free(&key);
 		return ok;
@@ -916,7 +981,7 @@ enum err WEAK sign_key_gen(enum sign_alg alg, const uint8_t *seed,
 		return ok;
 	}
 #endif /* HAVE_ED25519 */
-#if _SUITE_USES_P256
+#if _SUITE_USES_ES256
 	if (alg == ES256) {
 		ecc_key key;
 		byte pub33[33];
@@ -958,7 +1023,7 @@ enum err WEAK sign_key_gen(enum sign_alg alg, const uint8_t *seed,
 		wc_ecc_free(&key);
 		return ok;
 	}
-#endif /* _SUITE_USES_P256 */
+#endif /* _SUITE_USES_ES256 */
 #if _SUITE_USES_P384
 	if (alg == ES384) {
 		ecc_key key;
@@ -969,16 +1034,44 @@ enum err WEAK sign_key_gen(enum sign_alg alg, const uint8_t *seed,
 		wc_ecc_import_private_key_ex(seed, 48, NULL, 0,
 					     &key, ECC_SECP384R1);
 		wc_ecc_make_pub(&key, NULL);
+		/* Use SECG compressed form so pub97[0] tells us Y parity. */
+		pub_len = sizeof(pub97);
+		wc_ecc_export_x963_ex(&key, pub97, &pub_len, 1);
+		/* RFC 9528 §3.7: CRED uses y=false (even Y, prefix 0x02).
+		 * If Y is odd (prefix 0x03), negate the private scalar: new_sk = n - sk.
+		 * The negated key has the same X but even Y, keeping y=false valid. */
+		if (pub97[0] == 0x03) {
+			/* P-384 order n (NIST FIPS 186-4) */
+			static const byte p384n[48] = {
+				0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+				0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+				0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
+				0xC7,0x63,0x4D,0x81,0xF4,0x37,0x2D,0xDF,
+				0x58,0x1A,0x0D,0xB2,0x48,0xB0,0xA7,0x7A,
+				0xEC,0xEC,0x19,0x6A,0xCC,0xC5,0x29,0x73
+			};
+			mp_int order, neg;
+			mp_init(&order);
+			mp_init(&neg);
+			mp_read_unsigned_bin(&order, p384n, 48);
+			mp_sub(&order, &key.k[0], &neg);
+			mp_copy(&neg, &key.k[0]);
+			mp_clear(&order);
+			mp_clear(&neg);
+			/* Recompute public key from negated private key */
+			wc_ecc_make_pub(&key, NULL);
+			pub_len = sizeof(pub97);
+			wc_ecc_export_x963_ex(&key, pub97, &pub_len, 1);
+		}
 		wc_ecc_export_private_only(&key, sk->ptr, &sk_len);
 		sk->len = (uint32_t)sk_len;
-		wc_ecc_export_x963(&key, pub97, &pub_len);
 		memcpy(pk->ptr, pub97 + 1, 48);
 		pk->len = 48;
 		wc_ecc_free(&key);
 		return ok;
 	}
 #endif /* _SUITE_USES_P384 */
-#if _SUITE_USES_X448
+#if _SUITE_USES_X448 && defined(HAVE_ED448)
 	if (alg == Ed448) {
 		ed448_key key;
 		word32 pk_len = 57;
@@ -991,7 +1084,7 @@ enum err WEAK sign_key_gen(enum sign_alg alg, const uint8_t *seed,
 		wc_ed448_free(&key);
 		return ok;
 	}
-#endif /* _SUITE_USES_X448 */
+#endif /* _SUITE_USES_X448 && HAVE_ED448 */
 #endif /* WOLFCRYPT */
 	return crypto_operation_not_implemented;
 }

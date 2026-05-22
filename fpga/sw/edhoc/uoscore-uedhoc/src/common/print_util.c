@@ -117,11 +117,7 @@ void handle_runtime_error(int error_code, const char *file_name, const int line)
 void handle_external_runtime_error(int error_code, const char *file_name,
 				   const int line)
 {
-	(void)error_code;
-	(void)file_name;
-	(void)line;
-
-#ifdef DEBUG_PRINT
-	PRINTF(external_runtime_error_message, error_code, file_name, line);
-#endif
+	/* Always print external lib errors so we can diagnose FAIL:3 on bare-metal. */
+	extern void kprintf(const char *, ...);
+	kprintf("EXT_ERR %d at %s:%d\r\n", error_code, file_name, line);
 }

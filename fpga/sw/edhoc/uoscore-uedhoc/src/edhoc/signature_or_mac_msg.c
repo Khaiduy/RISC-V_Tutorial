@@ -197,7 +197,7 @@ signature_or_mac(enum sgn_or_mac_op op, bool static_dh, struct suite *suite,
 			}
 
 		} else {
-#if defined(EDHOC_AUTH_SK) || defined(EDHOC_PEER_SK)
+#ifdef EDHOC_PEER_SK
 			PRINTF("SIG_STRUCT_SIZE: %d\n", SIG_STRUCT_SIZE);
 			uint32_t sig_struct_size = SIG_STRUCT_SIZE_CALC(
 				COSE_SIGN1_STR_LEN, id_cred->len,

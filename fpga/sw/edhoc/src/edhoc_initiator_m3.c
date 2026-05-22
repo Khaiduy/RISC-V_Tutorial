@@ -39,7 +39,7 @@ extern void csprng_add_entropy(const uint8_t *data, uint32_t len);
  *============================================================================*/
 
 // Initiator's EPHEMERAL private key (X) - generated per session via ephemeral_dh_key_gen
-static uint8_t x_i[32];
+static uint8_t x_i[SUITE_DH_LEN];
 
 // Initiator's STATIC DH seed - used to derive the actual P-256 or X25519 key pair
 // For X25519: used directly (with clamping) as private key
@@ -49,11 +49,11 @@ static const uint8_t i_sk_seed[] = {
     0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01
 };
 // Actual static DH private key (may differ from seed for P-256)
-static uint8_t i_sk[32];
+static uint8_t i_sk[SUITE_DH_LEN];
 
 // Public keys (computed at runtime from private keys)
-static uint8_t g_x[32];  // Ephemeral public key = X25519(x_i, basepoint)
-static uint8_t g_i[32];  // Static DH public key = X25519(i_sk, basepoint)
+static uint8_t g_x[SUITE_DH_LEN];  // Ephemeral public key = X25519(x_i, basepoint)
+static uint8_t g_i[SUITE_DH_LEN];  // Static DH public key = X25519(i_sk, basepoint)
 
 // Connection identifier for initiator
 static const uint8_t c_i[] = {0x2d}; // C_I = -14
@@ -94,7 +94,7 @@ static const uint8_t r_sk_known[] = {
 
 // Responder's STATIC DH public key (G_R) - computed at startup via x25519_public_from_private()
 // so that the same library function is used on both sides.
-static uint8_t g_r[32];
+static uint8_t g_r[SUITE_DH_LEN];
 
 // CRED_R: CCS containing responder's static DH public key (pre-built)
 static uint8_t cred_r[CRED_BUF_MAX]; // Buffer for CRED_R
@@ -125,13 +125,13 @@ int main(void) {
     // For P-256, i_sk is used directly as the private key scalar.
     // g_r is peer's public key — only the public key matters for verification.
     {
-        memcpy(i_sk, i_sk_seed, 32);
-        struct byte_array isk_ba = {.ptr = i_sk, .len = 32};
-        struct byte_array gi_ba  = {.ptr = g_i, .len = 32};
-        uint8_t rsk_tmp[32];
-        memcpy(rsk_tmp, r_sk_known, 32);
-        struct byte_array rsk_ba = {.ptr = rsk_tmp, .len = 32};
-        struct byte_array gr_ba  = {.ptr = g_r, .len = 32};
+        memset(i_sk, 0, sizeof(i_sk)); memcpy(i_sk, i_sk_seed, sizeof(i_sk_seed));
+        struct byte_array isk_ba = {.ptr = i_sk, .len = SUITE_DH_LEN};
+        struct byte_array gi_ba  = {.ptr = g_i, .len = SUITE_DH_LEN};
+        uint8_t rsk_tmp[SUITE_DH_LEN];
+        memset(rsk_tmp, 0, sizeof(rsk_tmp)); memcpy(rsk_tmp, r_sk_known, sizeof(r_sk_known));
+        struct byte_array rsk_ba = {.ptr = rsk_tmp, .len = SUITE_DH_LEN};
+        struct byte_array gr_ba  = {.ptr = g_r, .len = SUITE_DH_LEN};
         ephemeral_dh_key_gen(SUITE_ECDH_ALG, 0, &isk_ba, &gi_ba);
         ephemeral_dh_key_gen(SUITE_ECDH_ALG, 0, &rsk_ba, &gr_ba);
     }
@@ -141,9 +141,9 @@ int main(void) {
     t_keygen_start = read_cycles();
 #endif
     {
-        struct byte_array x_ba = {.ptr = x_i, .len = 32};
-        struct byte_array gx_ba = {.ptr = g_x, .len = 32};
-        default_CSPRNG(x_i, 32);
+        struct byte_array x_ba = {.ptr = x_i, .len = SUITE_DH_LEN};
+        struct byte_array gx_ba = {.ptr = g_x, .len = SUITE_DH_LEN};
+        default_CSPRNG(x_i, SUITE_DH_LEN);
         ephemeral_dh_key_gen(SUITE_ECDH_ALG, 0, &x_ba, &gx_ba);
     }
 #ifdef TIMING_BREAKDOWN
@@ -153,8 +153,8 @@ int main(void) {
     // Build credentials with the computed public keys
     static const uint8_t kid_i[] = {0x01};
     static const uint8_t kid_r[] = {0x02};
-    cred_i_len = build_ccs_credential(cred_i, "InitM3", kid_i, 1, g_i, 32, SUITE_CRV_DH);
-    cred_r_len = build_ccs_credential(cred_r, "RespM3", kid_r, 1, g_r, 32, SUITE_CRV_DH);
+    cred_i_len = build_ccs_credential(cred_i, "InitM3", kid_i, 1, g_i, SUITE_DH_LEN, SUITE_CRV_DH);
+    cred_r_len = build_ccs_credential(cred_r, "RespM3", kid_r, 1, g_r, SUITE_DH_LEN, SUITE_CRV_DH);
     
 #ifdef DEBUG_PRINT
     kprintf("\r\n=== INITIATOR KEY MATERIAL ===\r\n");
@@ -232,7 +232,7 @@ int main(void) {
     /*========================================================================
      * RUN EDHOC
      *========================================================================*/
-    uint8_t prk_out_buf[32], err_msg_buf[64];
+    uint8_t prk_out_buf[SUITE_PRK_LEN], err_msg_buf[64];
     struct byte_array prk_out = {.ptr = prk_out_buf, .len = sizeof(prk_out_buf)};
     struct byte_array err_msg = {.ptr = err_msg_buf, .len = sizeof(err_msg_buf)};
 
