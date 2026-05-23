@@ -242,7 +242,8 @@ def telnet_cmds(host, port, commands):
     return results
 
 commands = [
-    ('halt', 5.0),
+    ('reset halt', 5.0),  # full peripheral reset (clears UART FIFOs from prior boot)
+    ('halt', 2.0),
     ('reg mstatus 0x0', 1.0),
     ('reg mie 0x0', 1.0),
     ('reg mtvec 0x80000000', 1.0),
