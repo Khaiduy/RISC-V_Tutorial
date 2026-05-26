@@ -39,6 +39,7 @@ CRYPTO_SUITE ?= 2
 #                           legacy stack doesn't provide (AES-GCM, P-384,
 #                           SHA-384, X448, Ed448, SHAKE-256, KMAC-256).
 EDHOC_BACKEND ?= wolfssl
+export EDHOC_BACKEND   # propagate to recursive make ($(MAKE) -C ...)
 
 # For legacy backend on suites 0/1/4/5/7, swap WOLFCRYPT for MONOCYPHER+TINYCRYPT.
 _LEGACY_SUITES := 0 1 4 5 7
@@ -138,13 +139,37 @@ _WC_ED25519  = $(WOLFCRYPT_DIR)/ed25519.c \
 _WC_ED448    = $(WOLFCRYPT_DIR)/ed448.c \
                $(WOLFCRYPT_DIR)/ge_448.c
 
+# ── Legacy backend source sets (Monocypher + TinyCrypt + Ascon-c) ───────
+# Used when EDHOC_BACKEND=legacy AND CRYPTO_SUITE in {0,1,4,5,7}.
+MONOCYPHER_DIR = $(M3_EDHOC_LIB)/externals/Monocypher/src
+TINYCRYPT_DIR  = $(M3_EDHOC_LIB)/externals/tinycrypt/lib/source
+ASCON_C_DIR    = $(M3_EDHOC_LIB)/externals/ascon-c
+
+# Note: $(M3_EDHOC_LIB) and TINYCRYPT_DIR may not be re-defined here on
+# every code path — the variables also appear in the per-target sections
+# further below. The legacy assignments here are the ones used by the
+# top-level `all:` build when EDHOC_BACKEND=legacy.
+
+_MONO_CORE   = $(MONOCYPHER_DIR)/monocypher.c \
+               $(MONOCYPHER_DIR)/optional/monocypher-ed25519.c
+_TC_CCM_SHA  = $(TINYCRYPT_DIR)/aes_encrypt.c \
+               $(TINYCRYPT_DIR)/ccm_mode.c \
+               $(TINYCRYPT_DIR)/tc_sha256.c \
+               $(TINYCRYPT_DIR)/hmac.c \
+               $(TINYCRYPT_DIR)/utils.c
+
 # ── Per-suite WOLFCRYPT_SRCS assembly ──────────────────────────────────
 # WOLFCRYPT_SRCS: AEAD + hash + ECDH only — NO signing sources.
 # WOLFCRYPT_SIGN_SRCS: Edwards-curve signing — set per-suite below.
 # Methods 0-2 link both; Method 3 (StaticDH/StaticDH) links WOLFCRYPT_SRCS only.
 ifeq ($(CRYPTO_SUITE),0)
-# Suite 0: AES-128-CCM (tag=8) + SHA-256 + SHA-512 + X25519
+ifeq ($(_USE_LEGACY),1)
+# Suite 0 (legacy): Monocypher X25519+Ed25519+SHA-512 + TinyCrypt AES-CCM+SHA-256+HMAC
+WOLFCRYPT_SRCS = $(_MONO_CORE) $(_TC_CCM_SHA)
+else
+# Suite 0 (wolfssl): AES-128-CCM (tag=8) + SHA-256 + SHA-512 + X25519
 WOLFCRYPT_SRCS = $(_WC_CORE) $(_WC_SHA512) $(_WC_AES) $(_WC_X25519)
+endif
 endif
 ifeq ($(CRYPTO_SUITE),1)
 # Suite 1: AES-128-CCM (tag=16) + SHA-256 + SHA-512 + X25519
@@ -195,15 +220,23 @@ endif
 # already provides ECDSA sign/verify.
 # RFC 9528 Table 6: Suite 6 signs with ES256, not Ed25519, despite using X25519 ECDH.
 WOLFCRYPT_SIGN_SRCS =
+ifneq ($(_USE_LEGACY),1)
 ifneq ($(filter $(CRYPTO_SUITE),0 1 4 7),)
 WOLFCRYPT_SIGN_SRCS = $(_WC_ED25519)
 endif
 ifeq ($(CRYPTO_SUITE),25)
 WOLFCRYPT_SIGN_SRCS = $(_WC_ED448)
 endif
+endif
+# (Legacy backend handles Ed25519 via monocypher-ed25519.c already in _MONO_CORE.)
 
-# wolfCrypt compile flags applied to all suites
+# Backend-specific compile flags. wolfCrypt always gets its USER_SETTINGS
+# include; legacy backend gets -I paths for Monocypher + TinyCrypt headers.
+ifeq ($(_USE_LEGACY),1)
+CFLAGS += -I$(MONOCYPHER_DIR) -I$(M3_EDHOC_LIB)/externals/tinycrypt/lib/include
+else
 CFLAGS += $(WOLFCRYPT_CFLAGS)
+endif
 
 LDFLAGS = $(ARCH_FLAGS) -flto -T linker/main.lds  -Llinker
 LDFLAGS += -fno-builtin -fno-tree-loop-distribute-patterns -fno-unwind-tables -fno-asynchronous-unwind-tables

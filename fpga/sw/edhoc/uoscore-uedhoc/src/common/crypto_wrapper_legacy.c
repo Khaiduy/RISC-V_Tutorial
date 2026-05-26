@@ -879,4 +879,24 @@ enum err WEAK hash(enum hash_alg alg, const struct byte_array *in,
 	return crypto_operation_not_implemented;
 }
 
+/* sign_key_gen — derive Ed25519 keypair from a 32-byte seed.
+ * Added for parity with the current wolfSSL-era crypto_wrapper.c (the
+ * 1556c51c original didn't have this function). The EDHOC apps use it to
+ * derive the long-term signing key at boot. */
+enum err WEAK sign_key_gen(enum sign_alg alg, const uint8_t *seed,
+                           struct byte_array *sk, struct byte_array *pk)
+{
+#ifdef MONOCYPHER
+	if (alg == EdDSA) {
+		/* Monocypher: 64-byte sk = expanded(seed) || pk, 32-byte pk. */
+		crypto_ed25519_key_pair(sk->ptr, pk->ptr, (uint8_t *)seed);
+		sk->len = 64;
+		pk->len = 32;
+		return ok;
+	}
+#endif
+	(void)alg; (void)seed; (void)sk; (void)pk;
+	return unsupported_ecdh_curve;
+}
+
 #endif /* defined(MONOCYPHER) || defined(TINYCRYPT) — legacy backend outer guard */
