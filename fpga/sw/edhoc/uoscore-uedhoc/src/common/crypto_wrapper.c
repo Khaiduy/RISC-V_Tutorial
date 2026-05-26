@@ -8,6 +8,14 @@
    option. This file may not be copied, modified, or distributed
    except according to those terms.
 */
+/* This file is the wolfSSL-backed crypto wrapper. A parallel file
+ * crypto_wrapper_legacy.c provides the Monocypher + TinyCrypt + Ascon-c
+ * backends for Suites 0/1/4/5/7 + PSK. The Makefile picks one backend per
+ * build via -DWOLFCRYPT or -DMONOCYPHER -DTINYCRYPT. The outer guard below
+ * leaves this file empty when the legacy backend is selected so symbols
+ * don't collide at link time. */
+#ifdef WOLFCRYPT
+
 #include <string.h>
 
 #include "edhoc.h"
@@ -1231,4 +1239,6 @@ enum err kem_decap(enum kem_alg alg, const struct byte_array *dk,
 	return ok;
 }
 #endif /* WOLFSSL_HAVE_MLKEM */
-#endif /* WOLFCRYPT */
+#endif /* WOLFCRYPT (inner block) */
+
+#endif /* WOLFCRYPT — outer guard, mirror at top of file */

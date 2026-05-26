@@ -31,9 +31,31 @@ endif
 #   CRYPTO_SUITE=7: Suite 7 - Ascon-AEAD-128 + Ascon-Hash256 (16-byte tag, 16-byte nonce) [default]
 CRYPTO_SUITE ?= 2
 
+# Crypto backend dispatch.
+#   EDHOC_BACKEND=wolfssl (default): all suites use wolfCrypt.
+#   EDHOC_BACKEND=legacy  : suites 0/1/4/5/7 + PSK use Monocypher + TinyCrypt
+#                           (+ Ascon-c for Suite 7). Suites 6/24/25 always stay
+#                           on wolfCrypt because they need primitives the
+#                           legacy stack doesn't provide (AES-GCM, P-384,
+#                           SHA-384, X448, Ed448, SHAKE-256, KMAC-256).
+EDHOC_BACKEND ?= wolfssl
+
+# For legacy backend on suites 0/1/4/5/7, swap WOLFCRYPT for MONOCYPHER+TINYCRYPT.
+_LEGACY_SUITES := 0 1 4 5 7
+ifeq ($(EDHOC_BACKEND),legacy)
+ifneq ($(filter $(CRYPTO_SUITE),$(_LEGACY_SUITES)),)
+_USE_LEGACY := 1
+endif
+endif
+
 ifeq ($(CRYPTO_SUITE),0)
 $(info Building with Suite 0: AES-CCM-16-64-128 (8-byte tag))
+ifeq ($(_USE_LEGACY),1)
+$(info   backend: legacy [Monocypher + TinyCrypt])
+CFLAGS += -DMONOCYPHER -DTINYCRYPT -DEDHOC_CRYPTO_SUITE=0
+else
 CFLAGS += -DWOLFCRYPT -DEDHOC_CRYPTO_SUITE=0
+endif
 else ifeq ($(CRYPTO_SUITE),1)
 $(info Building with Suite 1: AES-CCM-16-128-128 (16-byte tag))
 CFLAGS += -DWOLFCRYPT -DEDHOC_CRYPTO_SUITE=1
@@ -686,6 +708,33 @@ edhoc_m3_responder:
 # 		C_SOURCES="src/edhoc_responder_m3.c src/ed25519_stubs.c $(M3_COMMON_SRC_NOMONO) $(COMPACT25519_X25519_ONLY_SRC) $(M3_CRYPTO_SRC)" \
 # 		ASM_SOURCES="src/crt0.S" \
 # 		INCLUDES="$(M3_COMPACT_INCLUDES)" EDHOC_MODE=original
+
+# ============================================================================
+# X25519 Micro-Benchmark: wolfSSL vs Monocypher vs compact25519
+# Compares scalar-mult cycle counts of three pure-C X25519 implementations
+# on identical inputs, and cross-checks DH output equality.
+# Usage: make bench_x25519
+# ============================================================================
+BENCH_X25519_MONO    = $(M3_EDHOC_LIB)/externals/Monocypher/src/monocypher.c
+BENCH_X25519_COMPACT = $(M3_EDHOC_LIB)/externals/compact25519/src/c25519/c25519.c \
+                       $(M3_EDHOC_LIB)/externals/compact25519/src/c25519/f25519.c
+BENCH_X25519_WOLF    = $(WOLFCRYPT_DIR)/curve25519.c \
+                       $(WOLFCRYPT_DIR)/fe_operations.c \
+                       $(WOLFCRYPT_DIR)/fe_low_mem.c
+BENCH_X25519_INCLUDES = -I. -Iinclude \
+                        -I$(M3_EDHOC_LIB)/externals/Monocypher/src \
+                        -I$(M3_EDHOC_LIB)/externals/compact25519/src \
+                        -I$(WOLFSSL_ROOT) \
+                        -include $(WOLFSSL_ROOT)/user_settings.h
+
+bench_x25519:
+	@echo "Building X25519 micro-benchmark (wolfSSL + Monocypher + compact25519)..."
+	@$(MAKE) all TARGET=bench_x25519 EDHOC_LIB_DIR=$(M3_EDHOC_LIB) \
+		C_SOURCES="src/bench_x25519.c src/kprintf.c src/libc_stubs.c $(BENCH_X25519_MONO) $(BENCH_X25519_COMPACT) $(BENCH_X25519_WOLF)" \
+		ASM_SOURCES="src/crt0.S" \
+		INCLUDES="$(BENCH_X25519_INCLUDES)" \
+		"CFLAGS=$(CFLAGS) -DWOLFSSL_USER_SETTINGS" \
+		LIBS="-lgcc"
 
 # # ============================================================================
 # # Crypto Micro-Benchmark
