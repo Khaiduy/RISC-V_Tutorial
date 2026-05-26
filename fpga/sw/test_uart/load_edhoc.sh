@@ -242,7 +242,9 @@ def telnet_cmds(host, port, commands):
     return results
 
 commands = [
-    ('reset halt', 5.0),  # full peripheral reset (clears UART FIFOs from prior boot)
+    # ('reset halt', ...) removed — ndmreset on the current Arty bitstream stalls
+    # the core clock, leaving dmstatus=0x0 and breaking subsequent commands.
+    # load_image overwrites any stale image; UART FIFOs are flushed externally.
     ('halt', 2.0),
     ('reg mstatus 0x0', 1.0),
     ('reg mie 0x0', 1.0),

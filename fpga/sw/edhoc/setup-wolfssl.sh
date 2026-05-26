@@ -21,4 +21,15 @@ cp -v wolfssl-overrides/wolfcrypt/src/kmac.c     wolfssl/wolfcrypt/src/kmac.c
 cp -v wolfssl-overrides/wolfssl/wolfcrypt/kmac.h wolfssl/wolfssl/wolfcrypt/kmac.h
 mkdir -p wolfssl/wolfcrypt/src/kmac
 cp -rv wolfssl-overrides/wolfcrypt/src/kmac/.    wolfssl/wolfcrypt/src/kmac/
+
+# Patch wolfSSL settings.h: remove the bogus
+#   #error "ED448 (HAVE_ED448) requires SHA-512 (WOLFSSL_SHA512)"
+# constraint. RFC 8032 §5.2 specifies Ed448 uses SHAKE-256 internally, and
+# our audit of ed448.c + ed448.h confirms zero SHA-512 references. The
+# #error is defensive boilerplate, not a real code dependency. Removing it
+# lets Suite 25 builds drop ~10 KB of unused .text (Transform_Sha512 + K512).
+echo "[setup-wolfssl] patching settings.h: removing bogus Ed448-requires-SHA512 #error..."
+sed -i 's|#error "ED448 (HAVE_ED448) requires SHA-512 (WOLFSSL_SHA512)"|/* Patched by setup-wolfssl.sh: Ed448 uses SHAKE-256 (RFC 8032), no SHA-512 dep */|' \
+    wolfssl/wolfssl/wolfcrypt/settings.h
+
 echo "[setup-wolfssl] done."

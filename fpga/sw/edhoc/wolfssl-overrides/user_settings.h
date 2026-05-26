@@ -31,21 +31,39 @@
 
 /* ── AEAD ciphers — selected by suite ──────────────────────────────── */
 
-/* AES (CCM for suites 0-3, GCM for suites 6 and 24) */
+/* AES (CCM for suites 0-3, GCM for suites 6 and 24).
+ * WOLFSSL_AES_SMALL_TABLES: drop the 4x1KB precomputed T-tables and keep only
+ * the 256-byte S-box. Saves ~4 KB of .rodata per AES build at a modest cycle
+ * cost — a good trade on this 50 MHz RV32 target where flash is tighter than
+ * CPU time.
+ * WOLFSSL_AES_NO_UNROLL: also don't unroll the AES round loop. Saves another
+ * ~500 B of .text; ~1.3x slower AES.
+ * GCM_SMALL: for AES-GCM suites (6, 24), bit-serial GHASH instead of the
+ * 4-bit table. Saves ~0.5 KB rodata; GHASH ~4-8x slower but EDHOC only
+ * authenticates short messages (msg_3/msg_4 plaintexts < 100 B) so the
+ * absolute cost is small. */
 #if EDHOC_CRYPTO_SUITE == 0 || EDHOC_CRYPTO_SUITE == 1 || \
     EDHOC_CRYPTO_SUITE == 2 || EDHOC_CRYPTO_SUITE == 3
 #  define HAVE_AESCCM
 #  define WOLFSSL_AES_128
+#  define WOLFSSL_AES_SMALL_TABLES
+#  define WOLFSSL_AES_NO_UNROLL
 #endif
 
 #if EDHOC_CRYPTO_SUITE == 6
 #  define HAVE_AESGCM
 #  define WOLFSSL_AES_128
+#  define WOLFSSL_AES_SMALL_TABLES
+#  define WOLFSSL_AES_NO_UNROLL
+#  define GCM_SMALL
 #endif
 
 #if EDHOC_CRYPTO_SUITE == 24
 #  define HAVE_AESGCM
 #  define WOLFSSL_AES_256
+#  define WOLFSSL_AES_SMALL_TABLES
+#  define WOLFSSL_AES_NO_UNROLL
+#  define GCM_SMALL
 #endif
 
 /* ChaCha20/Poly1305 for suites 4, 5, 25 */
@@ -62,19 +80,43 @@
 
 /* ── Hash algorithms — selected by suite ───────────────────────────── */
 
-/* SHA-256: always needed (HKDF base, suite hash for 0-7) */
+/* SHA-256: always needed (HKDF base, suite hash for 0-7).
+ * USE_SLOW_SHA256: replace the partially-unrolled compression with a small
+ * loop. Saves ~1-2 KB; SHA-256 is only called for a few hundred bytes per
+ * EDHOC handshake so the cycle penalty is negligible. */
 #define HAVE_SHA256
+#define USE_SLOW_SHA256
 
-/* SHA-512: required by Ed25519 (suites 0,1,4,6,7), SHA-384 (suite 24),
- * and Ed448 (suite 25 — wolfSSL settings.h enforces this dependency).
+/* SHA-512: required by:
+ *   - Ed25519 (suites 0,1,4,7) — Ed25519 internal HRAM hash uses SHA-512
+ *   - SHA-384 (suite 24) — uses sha512.c machinery, and EDHOC suite hash is SHA-384
+ *
+ * Per RFC 9528 Table 6:
+ *   - Suite 6  = A128GCM + SHA-256 + X25519 + ES256 → uses SHA-256 only.
+ *   - Suite 25 = ChaCha20/Poly1305 + SHAKE256 + X448 + Ed448 → Ed448 uses
+ *     SHAKE256 internally per RFC 8032 §5.2. We audited wolfSSL's ed448.c
+ *     and ed448.h: zero SHA-512 references. The compile-time
+ *     `#error "ED448 requires SHA-512"` in wolfssl/wolfcrypt/settings.h is
+ *     defensive boilerplate with no actual code backing it, so we patch it
+ *     out in setup-wolfssl.sh.
+ *
+ * Suites 6 and 25 therefore intentionally exclude SHA-512 (~10 KB savings
+ * each: Transform_Sha512 + K512 + helpers).
+ *
  * EDHOC_AUTH_SK: this role signs.
  * EDHOC_PEER_SK: the peer signs; this role must verify. */
 #if (EDHOC_CRYPTO_SUITE == 0 || EDHOC_CRYPTO_SUITE == 1 || \
-     EDHOC_CRYPTO_SUITE == 4 || EDHOC_CRYPTO_SUITE == 6 || \
-     EDHOC_CRYPTO_SUITE == 7 || EDHOC_CRYPTO_SUITE == 24 || \
-     EDHOC_CRYPTO_SUITE == 25) \
+     EDHOC_CRYPTO_SUITE == 4 || EDHOC_CRYPTO_SUITE == 7) \
     && (defined(EDHOC_AUTH_SK) || defined(EDHOC_PEER_SK))
 #  define WOLFSSL_SHA512
+#endif
+/* Suite 24 needs SHA-384 regardless of role (EDHOC suite hash). */
+#if EDHOC_CRYPTO_SUITE == 24
+#  define WOLFSSL_SHA512
+/* Replace the 8.9 KB unrolled _Transform_Sha512 with a small loop (~3 KB).
+ * Suite 24's runtime is dominated by P-384 scalar mult (~95 M cycles); the
+ * extra SHA-384 cycles per block are negligible by comparison. */
+#  define USE_SLOW_SHA512
 #endif
 
 /* SHA-384: Suite 24 only (implemented via sha512.c machinery) */
@@ -84,11 +126,15 @@
 #endif
 
 /* SHA-3 / SHAKE-256 / KMAC256: Suite 25 only.
- * RFC 9528 §4.1.1 mandates KMAC256 (not HMAC-SHA3-256) for EDHOC_Extract/Expand. */
+ * RFC 9528 §4.1.1 mandates KMAC256 (not HMAC-SHA3-256) for EDHOC_Extract/Expand.
+ * WOLFSSL_SHA3_SMALL: compact Keccak permutation. Saves ~1-2 KB; permutation
+ * ~1.5x slower but Suite 25 runtime is dominated by X448/Ed448 so SHAKE
+ * cycles are noise. */
 #if EDHOC_CRYPTO_SUITE == 25
 #  define WOLFSSL_SHA3
 #  define WOLFSSL_SHAKE256
 #  define WOLFSSL_KMAC
+#  define WOLFSSL_SHA3_SMALL
 #endif
 
 #define NO_SHA

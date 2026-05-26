@@ -111,19 +111,6 @@ int printf(const char *format, ...) {
     return 0;
 }
 
-int putchar(int c) {
-    // Stub: would normally output to UART
-    // For now, just return the character
-    (void)c;
-    return c;
-}
-
-int puts(const char *s) {
-    // Stub implementation
-    (void)s;
-    return 0;
-}
-
 // ============================================
 // Other commonly needed stubs
 // ============================================
@@ -176,37 +163,7 @@ void free(void *ptr) {
     // Do nothing - no heap management
 }
 
-// ============================================
-// File I/O stubs (not implemented for bare-metal)
-// ============================================
-
-typedef struct {
-    int unused;
-} FILE;
-
-FILE *fopen(const char *filename, const char *mode) {
-    (void)filename;
-    (void)mode;
-    return (FILE *)0;  // Return NULL - file operations not supported
-}
-
-int fclose(FILE *stream) {
-    (void)stream;
-    return 0;
-}
-
-size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
-    (void)ptr;
-    (void)size;
-    (void)nmemb;
-    (void)stream;
-    return 0;  // No bytes read
-}
-
-size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream) {
-    (void)ptr;
-    (void)size;
-    (void)nmemb;
-    (void)stream;
-    return 0;  // No bytes written
-}
+/* File I/O stubs intentionally removed: wolfSSL is built with NO_FILESYSTEM,
+ * and no app code calls fopen/fread/etc. If a future build references one,
+ * the linker will fail loudly — better than a silent no-op.
+ */

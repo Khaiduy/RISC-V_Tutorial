@@ -147,8 +147,8 @@ endif
 ifeq ($(CRYPTO_SUITE),6)
 # Suite 6 (RFC 9528 Table 6): A128GCM + SHA-256 + X25519 ECDH + ES256 sign.
 # Needs X25519 (curve25519.c) for ECDH + ECC (ecc.c) for ES256 sign/verify.
-# SHA-512 is pulled in by wolfSSL aes.c/sha256.c internal paths when HAVE_ECC is set.
-WOLFCRYPT_SRCS = $(_WC_CORE) $(_WC_SHA512) $(_WC_AES) $(_WC_X25519) $(_WC_ECC)
+# NO SHA-512: ES256 = ECDSA-with-SHA-256, and the EDHOC suite hash is SHA-256.
+WOLFCRYPT_SRCS = $(_WC_CORE) $(_WC_AES) $(_WC_X25519) $(_WC_ECC)
 endif
 ifeq ($(CRYPTO_SUITE),7)
 # Suite 7: Ascon-AEAD-128 + Ascon-Hash256 + SHA-512 + X25519
@@ -159,9 +159,13 @@ ifeq ($(CRYPTO_SUITE),24)
 WOLFCRYPT_SRCS = $(_WC_CORE) $(_WC_SHA512) $(_WC_AES) $(_WC_ECC)
 endif
 ifeq ($(CRYPTO_SUITE),25)
-# Suite 25: ChaCha20/Poly1305 + SHAKE-256 + X448 + Ed448 (Ed448 needs SHA-512).
+# Suite 25: ChaCha20/Poly1305 + SHAKE-256 + X448 + Ed448.
+# NO SHA-512: RFC 8032 §5.2 says Ed448 uses SHAKE256 internally; audit of
+# wolfSSL ed448.c + ed448.h confirms zero SHA-512 references. The defensive
+# `#error "ED448 requires SHA-512"` in wolfSSL settings.h is patched out by
+# setup-wolfssl.sh — see that script for details.
 # KMAC256 is required by RFC 9528 §4.1.1 for EDHOC_Extract/Expand.
-WOLFCRYPT_SRCS = $(_WC_CORE) $(_WC_SHA512) $(_WC_SHA3) $(_WC_KMAC) $(_WC_CHACHA) $(_WC_X448)
+WOLFCRYPT_SRCS = $(_WC_CORE) $(_WC_SHA3) $(_WC_KMAC) $(_WC_CHACHA) $(_WC_X448)
 endif
 
 # Sign: Edwards-curve sign/verify — excluded for Method 3 (StaticDH/StaticDH).
