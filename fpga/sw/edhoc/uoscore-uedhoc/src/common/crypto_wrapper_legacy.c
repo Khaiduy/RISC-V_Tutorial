@@ -303,7 +303,22 @@ enum err WEAK aead(enum aes_operation op, const struct byte_array *in,
 	// if no mocked data has been found - continue with normal aead
 #endif
 
-#if defined(TINYCRYPT)
+#if EDHOC_CRYPTO_SUITE == 4 && defined(MONOCYPHER)
+	/* Suite 4: ChaCha20-Poly1305 IETF (RFC 8439) — Monocypher streaming API.
+	 * Key=32, nonce=12, tag=16. EDHOC always passes 16-byte tag for Suite 4. */
+	crypto_aead_ctx ctx;
+	crypto_aead_init_ietf(&ctx, (uint8_t *)key->ptr, (uint8_t *)nonce->ptr);
+	if (op == DECRYPT) {
+		int r = crypto_aead_read(&ctx, out->ptr, tag->ptr,
+		                         aad->ptr, aad->len,
+		                         in->ptr, in->len);
+		if (r != 0) return mac_authentication_failed;
+	} else {
+		crypto_aead_write(&ctx, out->ptr, tag->ptr,
+		                  aad->ptr, aad->len,
+		                  in->ptr, in->len);
+	}
+#elif defined(TINYCRYPT)
 	struct tc_ccm_mode_struct c;
 	struct tc_aes_key_sched_struct sched;
 	TRY_EXPECT(tc_aes128_set_encrypt_key(&sched, key->ptr), 1);

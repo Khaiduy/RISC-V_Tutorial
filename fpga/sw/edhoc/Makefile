@@ -59,7 +59,12 @@ CFLAGS += -DWOLFCRYPT -DEDHOC_CRYPTO_SUITE=0
 endif
 else ifeq ($(CRYPTO_SUITE),1)
 $(info Building with Suite 1: AES-CCM-16-128-128 (16-byte tag))
+ifeq ($(_USE_LEGACY),1)
+$(info   backend: legacy [Monocypher + TinyCrypt])
+CFLAGS += -DMONOCYPHER -DTINYCRYPT -DEDHOC_CRYPTO_SUITE=1
+else
 CFLAGS += -DWOLFCRYPT -DEDHOC_CRYPTO_SUITE=1
+endif
 else ifeq ($(CRYPTO_SUITE),2)
 $(info Building with Suite 2: AES-CCM-16-64-128 + P-256 + ES256)
 CFLAGS += -DWOLFCRYPT -DEDHOC_CRYPTO_SUITE=2
@@ -68,7 +73,12 @@ $(info Building with Suite 3: AES-CCM-16-128-128 + P-256 + ES256)
 CFLAGS += -DWOLFCRYPT -DEDHOC_CRYPTO_SUITE=3
 else ifeq ($(CRYPTO_SUITE),4)
 $(info Building with Suite 4: ChaCha20/Poly1305 + X25519 + EdDSA)
+ifeq ($(_USE_LEGACY),1)
+$(info   backend: legacy [Monocypher + TinyCrypt])
+CFLAGS += -DMONOCYPHER -DTINYCRYPT -DEDHOC_CRYPTO_SUITE=4
+else
 CFLAGS += -DWOLFCRYPT -DEDHOC_CRYPTO_SUITE=4
+endif
 else ifeq ($(CRYPTO_SUITE),5)
 $(info Building with Suite 5: ChaCha20/Poly1305 + P-256 + ES256)
 CFLAGS += -DWOLFCRYPT -DEDHOC_CRYPTO_SUITE=5
@@ -172,8 +182,13 @@ WOLFCRYPT_SRCS = $(_WC_CORE) $(_WC_SHA512) $(_WC_AES) $(_WC_X25519)
 endif
 endif
 ifeq ($(CRYPTO_SUITE),1)
-# Suite 1: AES-128-CCM (tag=16) + SHA-256 + SHA-512 + X25519
+ifeq ($(_USE_LEGACY),1)
+# Suite 1 (legacy): same crypto as Suite 0; only AEAD tag length differs.
+WOLFCRYPT_SRCS = $(_MONO_CORE) $(_TC_CCM_SHA)
+else
+# Suite 1 (wolfssl): AES-128-CCM (tag=16) + SHA-256 + SHA-512 + X25519
 WOLFCRYPT_SRCS = $(_WC_CORE) $(_WC_SHA512) $(_WC_AES) $(_WC_X25519)
+endif
 endif
 ifeq ($(CRYPTO_SUITE),2)
 # Suite 2: AES-128-CCM + SHA-256 + P-256 (ECC covers DHE + ES256 sign)
@@ -184,8 +199,14 @@ ifeq ($(CRYPTO_SUITE),3)
 WOLFCRYPT_SRCS = $(_WC_CORE) $(_WC_AES) $(_WC_ECC)
 endif
 ifeq ($(CRYPTO_SUITE),4)
-# Suite 4: ChaCha20/Poly1305 + SHA-256 + SHA-512 + X25519
+ifeq ($(_USE_LEGACY),1)
+# Suite 4 (legacy): Monocypher ChaCha-Poly + X25519 + Ed25519 + TinyCrypt SHA-256/HMAC.
+# Drop tinycrypt aes_encrypt.c + ccm_mode.c (no AES needed); keep tc_sha256+hmac+utils.
+WOLFCRYPT_SRCS = $(_MONO_CORE) $(TINYCRYPT_DIR)/tc_sha256.c $(TINYCRYPT_DIR)/hmac.c $(TINYCRYPT_DIR)/utils.c
+else
+# Suite 4 (wolfssl): ChaCha20/Poly1305 + SHA-256 + SHA-512 + X25519
 WOLFCRYPT_SRCS = $(_WC_CORE) $(_WC_SHA512) $(_WC_CHACHA) $(_WC_X25519)
+endif
 endif
 ifeq ($(CRYPTO_SUITE),5)
 # Suite 5: ChaCha20/Poly1305 + SHA-256 + P-256
