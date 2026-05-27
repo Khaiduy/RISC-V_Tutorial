@@ -81,7 +81,12 @@ CFLAGS += -DWOLFCRYPT -DEDHOC_CRYPTO_SUITE=4
 endif
 else ifeq ($(CRYPTO_SUITE),5)
 $(info Building with Suite 5: ChaCha20/Poly1305 + P-256 + ES256)
+ifeq ($(_USE_LEGACY),1)
+$(info   backend: legacy [Monocypher ChaCha + TinyCrypt P-256/SHA-256])
+CFLAGS += -DMONOCYPHER -DTINYCRYPT -DEDHOC_CRYPTO_SUITE=5
+else
 CFLAGS += -DWOLFCRYPT -DEDHOC_CRYPTO_SUITE=5
+endif
 else ifeq ($(CRYPTO_SUITE),7)
 $(info Building with Suite 7: Ascon-AEAD-128 + Ascon-Hash256 [wolfCrypt])
 CFLAGS += -DWOLFCRYPT -DEDHOC_CRYPTO_SUITE=7
@@ -168,6 +173,16 @@ _TC_CCM_SHA  = $(TINYCRYPT_DIR)/aes_encrypt.c \
                $(TINYCRYPT_DIR)/hmac.c \
                $(TINYCRYPT_DIR)/utils.c
 
+# TinyCrypt P-256 (used by Suite 5 = ChaCha-Poly + P-256 + ES256).
+# Provides uECC_make_key, uECC_shared_secret, uECC_sign, uECC_verify.
+# Note: ecc_platform_specific.c defines default_CSPRNG; we already have
+# our own in src/csprng_stub.c. LDFLAGS already includes
+# -Wl,--allow-multiple-definition so the linker resolves the duplicate
+# cleanly — keep our bare-metal CSPRNG.
+_TC_P256     = $(TINYCRYPT_DIR)/ecc.c \
+               $(TINYCRYPT_DIR)/ecc_dh.c \
+               $(TINYCRYPT_DIR)/ecc_dsa.c
+
 # ── Per-suite WOLFCRYPT_SRCS assembly ──────────────────────────────────
 # WOLFCRYPT_SRCS: AEAD + hash + ECDH only — NO signing sources.
 # WOLFCRYPT_SIGN_SRCS: Edwards-curve signing — set per-suite below.
@@ -209,8 +224,16 @@ WOLFCRYPT_SRCS = $(_WC_CORE) $(_WC_SHA512) $(_WC_CHACHA) $(_WC_X25519)
 endif
 endif
 ifeq ($(CRYPTO_SUITE),5)
-# Suite 5: ChaCha20/Poly1305 + SHA-256 + P-256
+ifeq ($(_USE_LEGACY),1)
+# Suite 5 (legacy): Monocypher ChaCha-Poly + TinyCrypt P-256/ES256/SHA-256/HMAC.
+# Also includes AES + CCM + CTR-PRNG: TinyCrypt's ecc_dsa uses CTR-DRBG (AES-CTR)
+# to generate the per-signature ECDSA nonce. ciphertext.c in the EDHOC library
+# also still references AES-CCM symbols even though Suite 5 itself uses ChaCha-Poly.
+WOLFCRYPT_SRCS = $(_MONO_CORE) $(_TC_CCM_SHA) $(_TC_P256) $(TINYCRYPT_DIR)/ctr_prng.c
+else
+# Suite 5 (wolfssl): ChaCha20/Poly1305 + SHA-256 + P-256
 WOLFCRYPT_SRCS = $(_WC_CORE) $(_WC_CHACHA) $(_WC_ECC)
+endif
 endif
 ifeq ($(CRYPTO_SUITE),6)
 # Suite 6 (RFC 9528 Table 6): A128GCM + SHA-256 + X25519 ECDH + ES256 sign.
@@ -331,6 +354,11 @@ $(BUILD_DIR)/%.o: %.c $(CFLAGS_STAMP)
 # indirect call chains from wc_ecc_sign_hash_ex are constant-propagated
 # away.  Compiling these two files without LTO gives them real ELF symbols
 # that the linker keeps when directly referenced.
+#
+# These rules apply ONLY under the wolfSSL backend. Under EDHOC_BACKEND=legacy
+# we use TinyCrypt's own ecc.c (different file, same basename) — the generic
+# pattern rule above + vpath find TinyCrypt's source from C_SOURCES.
+ifneq ($(_USE_LEGACY),1)
 $(BUILD_DIR)/sp_c32.o: $(WOLFCRYPT_DIR)/sp_c32.c $(CFLAGS_STAMP)
 	@echo "[CC-nolto] $<"
 	@$(CC) -c $(filter-out -flto,$(CFLAGS)) $(INCLUDES) $(EXTRA_INCLUDES) $< -o $@
@@ -338,6 +366,7 @@ $(BUILD_DIR)/sp_c32.o: $(WOLFCRYPT_DIR)/sp_c32.c $(CFLAGS_STAMP)
 $(BUILD_DIR)/ecc.o: $(WOLFCRYPT_DIR)/ecc.c $(CFLAGS_STAMP)
 	@echo "[CC-nolto] $<"
 	@$(CC) -c $(filter-out -flto,$(CFLAGS)) $(INCLUDES) $(EXTRA_INCLUDES) $< -o $@
+endif
 
 $(BUILD_DIR)/%.o: %.S | $(BUILD_DIR)
 	@echo "[AS] $<"

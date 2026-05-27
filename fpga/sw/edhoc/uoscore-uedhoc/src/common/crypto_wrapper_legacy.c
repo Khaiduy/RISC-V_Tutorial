@@ -71,16 +71,26 @@ modify setting in include/psa/crypto_config.h
 #include <tinycrypt/ccm_mode.h>
 #include <tinycrypt/constants.h>
 #include <tinycrypt/hmac.h>
-/* STUB U_ECC */
-#define NUM_ECC_BYTES 32
-#define uECC_Curve int
-#define uECC_secp256r1() 0
-#define uECC_decompress(a, b, c)
-#define uECC_shared_secret(a, b, c, d) 1
-#define uECC_sign(a, b, c, d, e) 1
-#define uECC_verify(a, b, c, d, e) 1
-#define uECC_make_key(a, b, c) 1
-#define uECC_word_t int
+#include <tinycrypt/sha256.h>
+/* P-256 (uECC): real headers for suites that actually use it (2, 3, 5).
+ * Other TINYCRYPT suites keep the stubs to satisfy the ES256 dead-code
+ * branches in sign()/verify() without dragging ecc.c into the link. */
+#if EDHOC_CRYPTO_SUITE == 2 || EDHOC_CRYPTO_SUITE == 3 || EDHOC_CRYPTO_SUITE == 5
+#  include <tinycrypt/ecc.h>
+#  include <tinycrypt/ecc_dh.h>
+#  include <tinycrypt/ecc_dsa.h>
+#else
+/* STUB U_ECC — present so non-P-256 TINYCRYPT builds compile cleanly. */
+#  define NUM_ECC_BYTES 32
+#  define uECC_Curve int
+#  define uECC_secp256r1() 0
+#  define uECC_decompress(a, b, c)
+#  define uECC_shared_secret(a, b, c, d) 1
+#  define uECC_sign(a, b, c, d, e) 1
+#  define uECC_verify(a, b, c, d, e) 1
+#  define uECC_make_key(a, b, c) 1
+#  define uECC_word_t int
+#endif
 #endif
 
 #ifdef MBEDTLS
@@ -186,7 +196,7 @@ cleanup:
 
 #endif
 
-#if 0
+#if EDHOC_CRYPTO_SUITE == 2 || EDHOC_CRYPTO_SUITE == 3 || EDHOC_CRYPTO_SUITE == 5
 /* Declaration of function from TinyCrypt ecc.c */
 uECC_word_t cond_set(uECC_word_t p_true, uECC_word_t p_false,
 		     unsigned int cond);
@@ -303,9 +313,9 @@ enum err WEAK aead(enum aes_operation op, const struct byte_array *in,
 	// if no mocked data has been found - continue with normal aead
 #endif
 
-#if EDHOC_CRYPTO_SUITE == 4 && defined(MONOCYPHER)
-	/* Suite 4: ChaCha20-Poly1305 IETF (RFC 8439) — Monocypher streaming API.
-	 * Key=32, nonce=12, tag=16. EDHOC always passes 16-byte tag for Suite 4. */
+#if (EDHOC_CRYPTO_SUITE == 4 || EDHOC_CRYPTO_SUITE == 5) && defined(MONOCYPHER)
+	/* Suites 4 & 5: ChaCha20-Poly1305 IETF (RFC 8439) — Monocypher streaming API.
+	 * Key=32, nonce=12, tag=16. EDHOC always passes 16-byte tag for ChaCha suites. */
 	crypto_aead_ctx ctx;
 	crypto_aead_init_ietf(&ctx, (uint8_t *)key->ptr, (uint8_t *)nonce->ptr);
 	if (op == DECRYPT) {
