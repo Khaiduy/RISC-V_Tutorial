@@ -30,7 +30,15 @@ $(shell mkdir -p $(DIR))
 
 C_SOURCES += $(wildcard src/edhoc/*.c)
 C_SOURCES += $(wildcard src/oscore/*.c)
+# common/*.c — exclude ascon_hmac.c unless Suite 7 (ASCON) backend in use
+ifeq ($(findstring ASCON,$(CFLAGS) $(EXTENDED_CFLAGS)),ASCON)
 C_SOURCES += $(wildcard src/common/*.c)
+# Ascon-c reference implementation (ref/: pure C, no permutations.c collision)
+C_SOURCES += externals/ascon-c/crypto_aead/asconaead128/ref/aead.c
+C_SOURCES += externals/ascon-c/crypto_hash/asconhash256/ref/hash.c
+else
+C_SOURCES += $(filter-out %ascon_hmac.c, $(wildcard src/common/*.c))
+endif
 C_SOURCES += $(wildcard src/cbor/*.c)
 
 
@@ -131,7 +139,10 @@ endif
 ifneq ($(findstring TINYCRYPT,$(EXTENDED_CFLAGS)),TINYCRYPT)
 ifneq ($(findstring MBEDTLS,$(EXTENDED_CFLAGS)),MBEDTLS)
 ifneq ($(findstring WOLFCRYPT,$(EXTENDED_CFLAGS)),WOLFCRYPT)
+# Suite 7 legacy passes -DMONOCYPHER -DASCON with NO TinyCrypt — don't default-add it.
+ifneq ($(findstring ASCON,$(EXTENDED_CFLAGS)),ASCON)
 EXTENDED_CFLAGS += -DTINYCRYPT
+endif
 endif
 endif
 endif
@@ -150,6 +161,14 @@ endif
 
 ifeq ($(findstring TINYCRYPT,$(EXTENDED_CFLAGS)),TINYCRYPT)
 C_INCLUDES += -Iexternals/tinycrypt/lib/include
+endif
+
+# Ascon-c includes for Suite 7. NOTE: api.h conflicts between aead/ and hash/
+# (both define CRYPTO_* macros differently). We only add the aead -I globally;
+# hash.c gets its include via a per-file rule further below.
+ifeq ($(findstring ASCON,$(EXTENDED_CFLAGS)),ASCON)
+C_INCLUDES += -Iexternals/ascon-c/crypto_aead/asconaead128/ref
+C_INCLUDES += -Iexternals/ascon-c/tests
 endif
  
 ifeq ($(findstring MBEDTLS,$(EXTENDED_CFLAGS)),MBEDTLS)
@@ -185,6 +204,12 @@ $(DIR)/$(LIB_NAME): $(OBJ)
 $(DIR)/crypto_wrapper.o: src/common/crypto_wrapper.c Makefile makefile_config.mk
 	@echo [Compile-nolto] $<
 	@$(CC) -c $(filter-out -flto,$(EXTENDED_CFLAGS)) $< -o $@
+
+# Ascon hash.c needs HASH api.h first (defines CRYPTO_BYTES, ASCON_HASH_BYTES).
+# The AEAD api.h is global via -I; we prepend HASH -I for this one file only.
+$(DIR)/hash.o: externals/ascon-c/crypto_hash/asconhash256/ref/hash.c Makefile makefile_config.mk
+	@echo [Compile-ascon-hash] $<
+	@$(CC) -c -Iexternals/ascon-c/crypto_hash/asconhash256/ref $(EXTENDED_CFLAGS) $< -o $@
 
 $(DIR)/%.o: %.c Makefile makefile_config.mk
 	@echo [Compile] $<

@@ -162,7 +162,10 @@ FEATURES += -DI_OPTIONS_BUFF_MAX_LEN=255
 
 
 ifneq ($(findstring WOLFCRYPT,$(CFLAGS)),WOLFCRYPT)
+# Suite 7 legacy passes -DMONOCYPHER -DASCON (Ascon-c) with no TinyCrypt.
+ifneq ($(findstring ASCON,$(CFLAGS)),ASCON)
 CRYPTO_ENGINE += -DTINYCRYPT
+endif
 endif
 # MONOCYPHER is set conditionally by the outer Makefile via CFLAGS
 # to exclude Monocypher for P-256-only suites (2,3,5)

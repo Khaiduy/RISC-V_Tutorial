@@ -66,6 +66,14 @@ modify setting in include/psa/crypto_config.h
 #include "optional/monocypher-ed25519.h"
 #endif
 
+#ifdef ASCON
+/* Ascon-c NIST API. crypto_aead_encrypt/decrypt produce ciphertext||tag in a
+ * single buffer; we splice the 16-byte tag back into the EDHOC `tag` slot. */
+#include "crypto_aead.h"
+#include "crypto_hash.h"
+#include "common/ascon_hmac.h"
+#endif
+
 #ifdef TINYCRYPT
 #include <tinycrypt/aes.h>
 #include <tinycrypt/ccm_mode.h>
@@ -313,7 +321,35 @@ enum err WEAK aead(enum aes_operation op, const struct byte_array *in,
 	// if no mocked data has been found - continue with normal aead
 #endif
 
-#if (EDHOC_CRYPTO_SUITE == 4 || EDHOC_CRYPTO_SUITE == 5) && defined(MONOCYPHER)
+#if EDHOC_CRYPTO_SUITE == 7 && defined(ASCON)
+	/* Suite 7: Ascon-AEAD-128 (RFC draft). Key=16, nonce=16, tag=16.
+	 * NIST API produces ciphertext||tag in one buffer; we splice the tag
+	 * back into the EDHOC `tag` slot to match the EDHOC out/tag split. */
+	if (op == DECRYPT) {
+		/* in = ciphertext (no tag); rebuild ciphertext||tag for the NIST API. */
+		uint8_t ct_tag[256 + 16];
+		if (in->len + tag->len > sizeof(ct_tag)) return buffer_to_small;
+		memcpy(ct_tag, in->ptr, in->len);
+		memcpy(ct_tag + in->len, tag->ptr, tag->len);
+		unsigned long long mlen = 0;
+		int r = crypto_aead_decrypt(out->ptr, &mlen, NULL,
+		                            ct_tag, in->len + tag->len,
+		                            aad->ptr, aad->len,
+		                            nonce->ptr, key->ptr);
+		if (r != 0) return mac_authentication_failed;
+	} else {
+		uint8_t ct_tag[256 + 16];
+		if (in->len + tag->len > sizeof(ct_tag)) return buffer_to_small;
+		unsigned long long clen = 0;
+		int r = crypto_aead_encrypt(ct_tag, &clen,
+		                            in->ptr, in->len,
+		                            aad->ptr, aad->len,
+		                            NULL, nonce->ptr, key->ptr);
+		if (r != 0) return unexpected_result_from_ext_lib;
+		memcpy(out->ptr, ct_tag, in->len);
+		memcpy(tag->ptr, ct_tag + in->len, tag->len);
+	}
+#elif (EDHOC_CRYPTO_SUITE == 4 || EDHOC_CRYPTO_SUITE == 5) && defined(MONOCYPHER)
 	/* Suites 4 & 5: ChaCha20-Poly1305 IETF (RFC 8439) — Monocypher streaming API.
 	 * Key=32, nonce=12, tag=16. EDHOC always passes 16-byte tag for ChaCha suites. */
 	crypto_aead_ctx ctx;
@@ -582,6 +618,18 @@ enum err WEAK hkdf_extract(enum hash_alg alg, const struct byte_array *salt,
 	string. OSCORE sets the salt default value to empty byte string, which 
 	is converted to a string of zeroes (see Section 2.2 of [RFC5869])".*/
 
+#ifdef ASCON
+	if (alg == ASCON_HASH256) {
+		/* Ascon-HMAC over Ascon-Hash256 (RFC 2104 with 64-byte block). */
+		uint8_t zero_salt[32] = { 0 };
+		const uint8_t *k = (salt->ptr && salt->len) ? salt->ptr : zero_salt;
+		uint32_t klen = (salt->ptr && salt->len) ? salt->len : 32;
+		if (ascon_hmac(k, klen, ikm->ptr, ikm->len, out) != 0) {
+			return unexpected_result_from_ext_lib;
+		}
+		return ok;
+	}
+#endif
 	/*all currently prosed suites use hmac-sha256*/
 	if (alg != SHA_256) {
 		return crypto_operation_not_implemented;
@@ -636,6 +684,30 @@ enum err WEAK hkdf_extract(enum hash_alg alg, const struct byte_array *salt,
 enum err WEAK hkdf_expand(enum hash_alg alg, const struct byte_array *prk,
 			  const struct byte_array *info, struct byte_array *out)
 {
+#ifdef ASCON
+	if (alg == ASCON_HASH256) {
+		/* HKDF-Expand over Ascon-HMAC. */
+		uint32_t iterations_a = (out->len + 31) / 32;
+		if (iterations_a > 255) return hkdf_failed;
+		uint8_t t[32] = { 0 };
+		uint8_t buf[256 + 32 + 1];
+		for (uint8_t i = 1; i <= iterations_a; i++) {
+			uint32_t pos = 0;
+			if (i > 1) { memcpy(buf, t, 32); pos = 32; }
+			if (pos + info->len + 1 > sizeof(buf)) return hkdf_failed;
+			memcpy(buf + pos, info->ptr, info->len);
+			pos += info->len;
+			buf[pos++] = i;
+			if (ascon_hmac(prk->ptr, prk->len, buf, pos, t) != 0) {
+				return unexpected_result_from_ext_lib;
+			}
+			uint32_t take = (out->len < (uint32_t)(i * 32)) ?
+			                (out->len - (uint32_t)((i - 1) * 32)) : 32;
+			memcpy(out->ptr + (i - 1) * 32, t, take);
+		}
+		return ok;
+	}
+#endif
 	if (alg != SHA_256) {
 		return crypto_operation_not_implemented;
 	}
@@ -878,6 +950,15 @@ enum err WEAK ephemeral_dh_key_gen(enum ecdh_alg alg, uint32_t seed,
 enum err WEAK hash(enum hash_alg alg, const struct byte_array *in,
 		   struct byte_array *out)
 {
+#ifdef ASCON
+	if (alg == ASCON_HASH256) {
+		if (crypto_hash(out->ptr, in->ptr, in->len) != 0) {
+			return unexpected_result_from_ext_lib;
+		}
+		out->len = HASH_SIZE;
+		return ok;
+	}
+#endif
 	if (alg == SHA_256) {
 #ifdef TINYCRYPT
 		struct tc_sha256_state_struct s;

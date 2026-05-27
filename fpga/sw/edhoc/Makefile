@@ -88,8 +88,13 @@ else
 CFLAGS += -DWOLFCRYPT -DEDHOC_CRYPTO_SUITE=5
 endif
 else ifeq ($(CRYPTO_SUITE),7)
-$(info Building with Suite 7: Ascon-AEAD-128 + Ascon-Hash256 [wolfCrypt])
+$(info Building with Suite 7: Ascon-AEAD-128 + Ascon-Hash256)
+ifeq ($(_USE_LEGACY),1)
+$(info   backend: legacy [Monocypher X25519/Ed25519 + Ascon-c AEAD/Hash + Ascon-HMAC])
+CFLAGS += -DMONOCYPHER -DASCON -DEDHOC_CRYPTO_SUITE=7
+else
 CFLAGS += -DWOLFCRYPT -DEDHOC_CRYPTO_SUITE=7
+endif
 else ifeq ($(CRYPTO_SUITE),6)
 $(info Building with Suite 6: AES-128-GCM + X25519 + EdDSA [wolfCrypt])
 CFLAGS += -DWOLFCRYPT -DEDHOC_CRYPTO_SUITE=6
@@ -242,8 +247,15 @@ ifeq ($(CRYPTO_SUITE),6)
 WOLFCRYPT_SRCS = $(_WC_CORE) $(_WC_AES) $(_WC_X25519) $(_WC_ECC)
 endif
 ifeq ($(CRYPTO_SUITE),7)
-# Suite 7: Ascon-AEAD-128 + Ascon-Hash256 + SHA-512 + X25519
+ifeq ($(_USE_LEGACY),1)
+# Suite 7 (legacy): Monocypher X25519+Ed25519 ONLY. Ascon-c sources (aead.c,
+# hash.c, ascon_hmac.c) are added inside the library via -DASCON. App-level
+# (main, etc.) needs no extra Ascon objects.
+WOLFCRYPT_SRCS = $(_MONO_CORE)
+else
+# Suite 7 (wolfssl): Ascon-AEAD-128 + Ascon-Hash256 + SHA-512 + X25519
 WOLFCRYPT_SRCS = $(_WC_CORE) $(_WC_SHA512) $(_WC_ASCON) $(_WC_X25519)
+endif
 endif
 ifeq ($(CRYPTO_SUITE),24)
 # Suite 24: AES-256-GCM + SHA-384 + SHA-512 + P-384 (ECC covers ES384)
