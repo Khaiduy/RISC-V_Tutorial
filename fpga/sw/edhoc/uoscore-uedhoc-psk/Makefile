@@ -64,10 +64,11 @@ else ifeq ($(CRYPTO_SUITE),7)
 ASCON_AEAD_DIR := externals/ascon-c/crypto_aead/asconaead128/asm_rv32i
 ASCON_ASM_SRC  := $(ASCON_AEAD_DIR)/ascon.S
 C_SOURCES += $(ASCON_AEAD_DIR)/encrypt.c $(ASCON_AEAD_DIR)/decrypt.c
-# Ascon-Hash256 ref provides crypto_hash() (used by the legacy crypto wrapper
-# for ASCON_HASH_256). Its api.h (CRYPTO_BYTES=32) must win over the AEAD api.h
-# for this object — see the per-file hash.o rule below.
-C_SOURCES += externals/ascon-c/crypto_hash/asconhash256/ref/hash.c
+# Ascon-Hash256 over the SHARED asm permutation: crypto_hash() in C
+# (ascon_hash256_rv32.c) calls ascon_p12() (ascon_p12_rv32.S), which reuses the
+# AEAD's ascon_permute(). One permutation for AEAD + Hash — no duplicate.
+ASCON_SHIM_SRC := ../ascon_rv32/ascon_p12_rv32.S
+C_SOURCES += ../ascon_rv32/ascon_hash256_rv32.c
 endif
 
 
@@ -220,9 +221,10 @@ $(info    EXTENDED_CFLAGS are $(EXTENDED_CFLAGS))
 ################################################################################
 OBJ = $(addprefix $(DIR)/,$(notdir $(C_SOURCES:.c=.o)))
 OBJ += $(addprefix $(DIR)/,$(notdir $(ASM_SOURCES:.S=.o)))
-# Ascon AEAD assembly object (asm_rv32i). ASCON_ASM_SRC set only for Suite 7.
+# Ascon assembly objects (asm_rv32i AEAD + shared-permutation hash shim).
+# Set only for Suite 7.
 ifneq ($(ASCON_ASM_SRC),)
-OBJ += $(DIR)/ascon.o
+OBJ += $(DIR)/ascon.o $(DIR)/ascon_p12_rv32.o
 endif
 #$(info    \n OBJ is $(OBJ))
 
@@ -231,14 +233,14 @@ $(DIR)/$(LIB_NAME): $(OBJ)
 	@echo "[Link (Static)]"
 	@$(AR) -rcs $@ $^
 
-# Ascon hash.c includes "api.h" expecting CRYPTO_BYTES=32 (Hash256). The global
-# include order lists the AEAD ref dir first, so prepend the Hash ref dir for
-# this one object to resolve the correct api.h.
-$(DIR)/hash.o: EXTENDED_CFLAGS := -Iexternals/ascon-c/crypto_hash/asconhash256/ref $(EXTENDED_CFLAGS)
-
 # Ascon AEAD hand-written RV32I assembly (Suite 7 only).
 $(DIR)/ascon.o: $(ASCON_ASM_SRC) Makefile makefile_config.mk
 	@echo [Assemble-ascon] $<
+	@$(CC) -c $(EXTENDED_CFLAGS) $< -o $@
+
+# Shared-permutation hash shim (Suite 7 only).
+$(DIR)/ascon_p12_rv32.o: $(ASCON_SHIM_SRC) Makefile makefile_config.mk
+	@echo [Assemble-ascon-shim] $<
 	@$(CC) -c $(EXTENDED_CFLAGS) $< -o $@
 
 $(DIR)/%.o: %.c Makefile makefile_config.mk
