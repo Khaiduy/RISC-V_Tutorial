@@ -9,6 +9,12 @@
  * Public API matches uoscore-uedhoc-psk/inc/common/crypto_wrapper.h
  * (note: aead takes 7 args — algorithm is implicit via CRYPTO_SUITE).
  */
+/* Outer guard: emit symbols only under the wolfcrypt backend. The legacy
+ * backend (Monocypher + TinyCrypt + Ascon-c) lives in crypto_wrapper_legacy.c
+ * and is selected by -DMONOCYPHER/-DTINYCRYPT/-DASCON. Exactly one wrapper
+ * emits per build, avoiding duplicate symbols (both match src/common/*.c). */
+#ifdef WOLFCRYPT
+
 #include <string.h>
 
 #include "edhoc.h"
@@ -306,3 +312,5 @@ enum err WEAK verify(enum sign_alg alg, const struct byte_array *pk,
 	if (result) *result = false;
 	return crypto_operation_not_implemented;
 }
+
+#endif /* WOLFCRYPT */

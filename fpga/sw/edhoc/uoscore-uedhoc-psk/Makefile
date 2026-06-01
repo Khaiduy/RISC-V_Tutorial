@@ -58,10 +58,16 @@ C_SOURCES += externals/tinycrypt/lib/source/hmac.c
 C_SOURCES += externals/tinycrypt/lib/source/utils.c
 ASM_SOURCES =
 else ifeq ($(CRYPTO_SUITE),7)
-# Suite 7: Ascon (ref - reference implementation, pure C with inline permutations)
-# This avoids linker conflicts between AEAD and Hash P() functions
-C_SOURCES += externals/ascon-c/crypto_aead/asconaead128/ref/aead.c
-# Hash is built separately (already uses bi32_lowsize, library handles)
+# Suite 7 AEAD: asm_rv32i (hand-written RV32I assembly — far smaller & faster
+# than the 64-bit ref C permutation). Exports only ascon_* symbols + the NIST
+# crypto_aead_* API, so no P12/ROUND clash with the Hash ref impl (static-inline).
+ASCON_AEAD_DIR := externals/ascon-c/crypto_aead/asconaead128/asm_rv32i
+ASCON_ASM_SRC  := $(ASCON_AEAD_DIR)/ascon.S
+C_SOURCES += $(ASCON_AEAD_DIR)/encrypt.c $(ASCON_AEAD_DIR)/decrypt.c
+# Ascon-Hash256 ref provides crypto_hash() (used by the legacy crypto wrapper
+# for ASCON_HASH_256). Its api.h (CRYPTO_BYTES=32) must win over the AEAD api.h
+# for this object — see the per-file hash.o rule below.
+C_SOURCES += externals/ascon-c/crypto_hash/asconhash256/ref/hash.c
 endif
 
 
@@ -185,10 +191,9 @@ C_INCLUDES += -Iexternals/tinycrypt/lib/include
 endif
 
 ifeq ($(findstring ASCON,$(EXTENDED_CFLAGS)),ASCON)
-# Use ref (reference) implementation - pure C with inline permutations
-# Avoids linker conflicts between AEAD and Hash P() functions
-C_INCLUDES += -Iexternals/ascon-c/crypto_aead/asconaead128/ref
-# Use ref for hash too to match
+# AEAD = asm_rv32i (assembly); Hash = ref. Each provides its own api.h.
+C_INCLUDES += -I$(ASCON_AEAD_DIR)
+# Use ref for hash
 C_INCLUDES += -Iexternals/ascon-c/crypto_hash/asconhash256/ref
 C_INCLUDES += -Iexternals/ascon-c/tests
 C_INCLUDES += -Iinc/common
@@ -215,12 +220,26 @@ $(info    EXTENDED_CFLAGS are $(EXTENDED_CFLAGS))
 ################################################################################
 OBJ = $(addprefix $(DIR)/,$(notdir $(C_SOURCES:.c=.o)))
 OBJ += $(addprefix $(DIR)/,$(notdir $(ASM_SOURCES:.S=.o)))
+# Ascon AEAD assembly object (asm_rv32i). ASCON_ASM_SRC set only for Suite 7.
+ifneq ($(ASCON_ASM_SRC),)
+OBJ += $(DIR)/ascon.o
+endif
 #$(info    \n OBJ is $(OBJ))
 
 
 $(DIR)/$(LIB_NAME): $(OBJ) 
 	@echo "[Link (Static)]"
 	@$(AR) -rcs $@ $^
+
+# Ascon hash.c includes "api.h" expecting CRYPTO_BYTES=32 (Hash256). The global
+# include order lists the AEAD ref dir first, so prepend the Hash ref dir for
+# this one object to resolve the correct api.h.
+$(DIR)/hash.o: EXTENDED_CFLAGS := -Iexternals/ascon-c/crypto_hash/asconhash256/ref $(EXTENDED_CFLAGS)
+
+# Ascon AEAD hand-written RV32I assembly (Suite 7 only).
+$(DIR)/ascon.o: $(ASCON_ASM_SRC) Makefile makefile_config.mk
+	@echo [Assemble-ascon] $<
+	@$(CC) -c $(EXTENDED_CFLAGS) $< -o $@
 
 $(DIR)/%.o: %.c Makefile makefile_config.mk
 	@echo [Compile] $<

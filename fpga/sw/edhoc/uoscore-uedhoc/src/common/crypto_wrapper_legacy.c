@@ -323,17 +323,18 @@ enum err WEAK aead(enum aes_operation op, const struct byte_array *in,
 
 #if EDHOC_CRYPTO_SUITE == 7 && defined(ASCON)
 	/* Suite 7: Ascon-AEAD-128 (RFC draft). Key=16, nonce=16, tag=16.
-	 * NIST API produces ciphertext||tag in one buffer; we splice the tag
-	 * back into the EDHOC `tag` slot to match the EDHOC out/tag split. */
+	 * NIST API takes/produces ciphertext||tag combined.
+	 *
+	 * EDHOC's ciphertext_encrypt_decrypt() conventions (ciphertext.c):
+	 *   DECRYPT: in = ct+tag combined, in->len = full length;
+	 *            out = plaintext (out->len = pt-only length already set);
+	 *            tag is a pointer INTO in->ptr (redundant for NIST API).
+	 *   ENCRYPT: in = plaintext, out = ciphertext (pt-length),
+	 *            tag = separate fresh buffer; caller appends tag to ct after. */
 	if (op == DECRYPT) {
-		/* in = ciphertext (no tag); rebuild ciphertext||tag for the NIST API. */
-		uint8_t ct_tag[256 + 16];
-		if (in->len + tag->len > sizeof(ct_tag)) return buffer_to_small;
-		memcpy(ct_tag, in->ptr, in->len);
-		memcpy(ct_tag + in->len, tag->ptr, tag->len);
 		unsigned long long mlen = 0;
 		int r = crypto_aead_decrypt(out->ptr, &mlen, NULL,
-		                            ct_tag, in->len + tag->len,
+		                            in->ptr, in->len,
 		                            aad->ptr, aad->len,
 		                            nonce->ptr, key->ptr);
 		if (r != 0) return mac_authentication_failed;

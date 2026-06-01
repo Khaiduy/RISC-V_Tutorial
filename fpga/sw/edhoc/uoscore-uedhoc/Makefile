@@ -33,8 +33,14 @@ C_SOURCES += $(wildcard src/oscore/*.c)
 # common/*.c — exclude ascon_hmac.c unless Suite 7 (ASCON) backend in use
 ifeq ($(findstring ASCON,$(CFLAGS) $(EXTENDED_CFLAGS)),ASCON)
 C_SOURCES += $(wildcard src/common/*.c)
-# Ascon-c reference implementation (ref/: pure C, no permutations.c collision)
-C_SOURCES += externals/ascon-c/crypto_aead/asconaead128/ref/aead.c
+# Ascon-c AEAD: asm_rv32i (hand-written RV32I assembly — far smaller & faster
+# than the 64-bit ref C permutation). Exports only ascon_* symbols + the NIST
+# crypto_aead_* API, so it does NOT clash with the Hash ref impl (which uses
+# static-inline permutations and emits no P12/ROUND symbols).
+ASCON_AEAD_DIR := externals/ascon-c/crypto_aead/asconaead128/asm_rv32i
+ASCON_ASM_SRC  := $(ASCON_AEAD_DIR)/ascon.S
+C_SOURCES += $(ASCON_AEAD_DIR)/encrypt.c $(ASCON_AEAD_DIR)/decrypt.c
+# Ascon-Hash256 stays on ref (static-inline permutation; small crypto_hash()).
 C_SOURCES += externals/ascon-c/crypto_hash/asconhash256/ref/hash.c
 else
 C_SOURCES += $(filter-out %ascon_hmac.c, $(wildcard src/common/*.c))
@@ -167,7 +173,7 @@ endif
 # (both define CRYPTO_* macros differently). We only add the aead -I globally;
 # hash.c gets its include via a per-file rule further below.
 ifeq ($(findstring ASCON,$(EXTENDED_CFLAGS)),ASCON)
-C_INCLUDES += -Iexternals/ascon-c/crypto_aead/asconaead128/ref
+C_INCLUDES += -I$(ASCON_AEAD_DIR)
 C_INCLUDES += -Iexternals/ascon-c/tests
 endif
  
@@ -191,6 +197,10 @@ $(info    EXTENDED_CFLAGS are $(EXTENDED_CFLAGS))
 # build the library
 ################################################################################
 OBJ = $(addprefix $(DIR)/,$(notdir $(C_SOURCES:.c=.o)))
+# Ascon AEAD assembly object (asm_rv32i). ASCON_ASM_SRC is set only for Suite 7.
+ifneq ($(ASCON_ASM_SRC),)
+OBJ += $(DIR)/ascon.o
+endif
 #$(info    \n OBJ is $(OBJ))
 
 
@@ -213,6 +223,11 @@ $(DIR)/hash.o: externals/ascon-c/crypto_hash/asconhash256/ref/hash.c Makefile ma
 
 $(DIR)/%.o: %.c Makefile makefile_config.mk
 	@echo [Compile] $<
+	@$(CC) -c $(EXTENDED_CFLAGS) $< -o $@
+
+# Ascon AEAD hand-written RV32I assembly (Suite 7 only).
+$(DIR)/ascon.o: $(ASCON_ASM_SRC) Makefile makefile_config.mk
+	@echo [Assemble-ascon] $<
 	@$(CC) -c $(EXTENDED_CFLAGS) $< -o $@
 
 clean:

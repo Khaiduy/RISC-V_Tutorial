@@ -41,6 +41,15 @@
 #include "monocypher.h"
 #endif
 
+#ifdef ASCON
+/* Ascon-Hash256 (ascon-c crypto_hash, provided by the EDHOC lib). Used for
+ * CSPRNG whitening on Suite-7 so the build does NOT link Monocypher Blake2b
+ * (~17 KB). Monocypher is still included above (for ChaCha20 / crypto_wipe),
+ * but its Blake2b stays dead-code-eliminated. */
+int crypto_hash(unsigned char *out, const unsigned char *in,
+                unsigned long long inlen);
+#endif
+
 /* -------------------------------------------------------------------------
  * RV32 counter helpers
  * rdcycleh/rdcycle: atomically read 64-bit cycle counter (hi-lo-hi loop).
@@ -170,6 +179,18 @@ static void csprng_seed(void)
     g_counter = 0;
     csprng_wipe(&sha_s, sizeof(sha_s));
 
+#elif defined(ASCON)
+    /* Whiten with Ascon-Hash256 (already linked) → 32-byte key + 8-byte nonce.
+     * Avoids the ~17 KB Monocypher Blake2b the MONOCYPHER branch would pull in. */
+    uint8_t digest[32], nd[32];
+    crypto_hash(digest, entropy, sizeof(entropy));
+    crypto_hash(nd, digest, 32);
+    memcpy(g_key,   digest, 32);
+    memcpy(g_nonce, nd,      8);
+    g_counter = 0;
+    crypto_wipe(digest, sizeof(digest));
+    crypto_wipe(nd,     sizeof(nd));
+
 #elif defined(MONOCYPHER)
     /* Whiten with Blake2b-512 → 32-byte key + 8-byte nonce */
     uint8_t digest[64];
@@ -235,6 +256,22 @@ void csprng_add_entropy(const uint8_t *data, uint32_t len)
     g_counter = 0;
     csprng_wipe(&sha_s, sizeof(sha_s));
 
+#elif defined(ASCON)
+    {
+    uint8_t buf[64];
+    uint32_t use = len < 32 ? len : 32;
+    memcpy(buf,      g_key, 32);
+    memcpy(buf + 32, data,  use);
+    uint8_t digest[32], nd[32];
+    crypto_hash(digest, buf, 32 + use);
+    crypto_hash(nd, digest, 32);
+    memcpy(g_key,   digest, 32);
+    memcpy(g_nonce, nd,      8);
+    g_counter = 0;
+    crypto_wipe(buf,    sizeof(buf));
+    crypto_wipe(digest, sizeof(digest));
+    crypto_wipe(nd,     sizeof(nd));
+    }
 #elif defined(MONOCYPHER)
     uint8_t buf[64];
     uint32_t use = len < 32 ? len : 32;
@@ -318,6 +355,30 @@ int default_CSPRNG(uint8_t *dest, unsigned int size)
 
         csprng_wipe(&hmac_s, sizeof(hmac_s));
         csprng_wipe(block, sizeof(block));
+    }
+
+#elif defined(ASCON)
+    /* Ascon-Hash256 counter mode: block = AsconHash(key || counter_LE32).
+     * Reuses the already-linked Ascon hash so Suite 7 does NOT drag in a
+     * separate stream cipher (Monocypher ChaCha20 ~1 KB). */
+    {
+    unsigned int done = 0;
+    while (done < size) {
+        uint8_t ctr_in[36];
+        memcpy(ctr_in, g_key, 32);
+        ctr_in[32] = (uint8_t)(g_counter);
+        ctr_in[33] = (uint8_t)(g_counter >> 8);
+        ctr_in[34] = (uint8_t)(g_counter >> 16);
+        ctr_in[35] = (uint8_t)(g_counter >> 24);
+        uint8_t block[32];
+        crypto_hash(block, ctr_in, sizeof(ctr_in));
+        g_counter++;
+        unsigned int chunk = size - done;
+        if (chunk > 32) chunk = 32;
+        memcpy(dest + done, block, chunk);
+        done += chunk;
+        csprng_wipe(block, sizeof(block));
+    }
     }
 
 #elif defined(MONOCYPHER)

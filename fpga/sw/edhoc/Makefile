@@ -438,6 +438,17 @@ x25519_test:
 		ASM_SOURCES="src/crt0.S" \
 		EXTRA_INCLUDES="-Idriver/x25519"
 
+# Ascon-c KAT self-test on RV32. Verifies whether the Ascon-c ref impl produces
+# correct KAT outputs when built for RISC-V. PASS → bug is in EDHOC integration;
+# FAIL → bug is RV32 build-specific (alignment, 32-bit, LTO).
+ascon_kat:
+	@echo "Building Ascon-c KAT self-test for RV32..."
+	@$(MAKE) all TARGET=ascon_kat \
+		C_SOURCES="src/ascon_kat_main.c src/kprintf.c src/libc_stubs.c uoscore-uedhoc/externals/ascon-c/crypto_aead/asconaead128/ref/aead.c uoscore-uedhoc/externals/ascon-c/crypto_hash/asconhash256/ref/hash.c uoscore-uedhoc/src/common/ascon_hmac.c" \
+		ASM_SOURCES="src/crt0.S" \
+		EXTRA_INCLUDES="-Iuoscore-uedhoc/externals/ascon-c/crypto_aead/asconaead128/ref -Iuoscore-uedhoc/externals/ascon-c/tests -Iuoscore-uedhoc/inc" \
+		LIBS="-lgcc"
+
 # ============================================================================
 # EDHOC Hardware-Accelerated Targets
 # These use the EDHOC hardware accelerator (edhoc_top) for full protocol
@@ -588,6 +599,42 @@ edhoc_psk_responder:
 		ASM_SOURCES="src/crt0.S" \
 		INCLUDES="$(PSK_INCLUDES)" EDHOC_MODE=psk \
 		"CFLAGS=$(CFLAGS) $(WOLFCRYPT_CFLAGS)"
+
+# ---------------------------------------------------------------------------
+# PSK legacy backend (Monocypher X25519 + TinyCrypt AES-CCM/SHA-256 [S0] or
+# Ascon-c [S7]). Invoke with EDHOC_BACKEND=legacy CRYPTO_SUITE=0|7 (+TIMING=1).
+# Under EDHOC_BACKEND=legacy, $(CFLAGS) already carries -DMONOCYPHER plus
+# -DTINYCRYPT (S0) / -DASCON (S7), and $(PSK_WOLFCRYPT_SRCS) resolves to the
+# Monocypher(+TinyCrypt) source set. No -DWOLFCRYPT, so the wolfcrypt
+# crypto_wrapper.c stays guarded out and crypto_wrapper_legacy.c emits.
+# Monocypher headers/sources are shared from the M3 lib via $(MONOCYPHER_DIR).
+# ---------------------------------------------------------------------------
+# Absolute Monocypher include: the PSK lib build runs in uoscore-uedhoc-psk/,
+# so a top-relative path would not resolve. abspath anchors it at $(CURDIR).
+PSK_MONO_INC := -I$(abspath $(MONOCYPHER_DIR))
+PSK_LEGACY_CFLAGS = $(CFLAGS) $(PSK_MONO_INC)
+
+edhoc_psk_initiator_legacy:
+	@echo "Building EDHOC PSK Initiator (Method 4, CRYPTO_SUITE=$(CRYPTO_SUITE), LEGACY backend)..."
+	-@$(MAKE) -C $(PSK_EDHOC_LIB) clean
+	@$(MAKE) -C $(PSK_EDHOC_LIB) CC="$(CC)" AR="$(AR)" CFLAGS="$(PSK_LEGACY_CFLAGS)" CRYPTO_SUITE=$(CRYPTO_SUITE)
+	@echo "Building PSK initiator app (Suite $(CRYPTO_SUITE), legacy)..."
+	@$(MAKE) all TARGET=edhoc_psk_initiator EDHOC_LIB_DIR=$(PSK_EDHOC_LIB) \
+		C_SOURCES="src/edhoc_initiator_psk.c $(PSK_COMMON_SRC) $(PSK_WOLFCRYPT_SRCS)" \
+		ASM_SOURCES="src/crt0.S" \
+		INCLUDES="$(PSK_INCLUDES) $(PSK_MONO_INC)" EDHOC_MODE=psk \
+		"CFLAGS=$(PSK_LEGACY_CFLAGS)"
+
+edhoc_psk_responder_legacy:
+	@echo "Building EDHOC PSK Responder (Method 4, CRYPTO_SUITE=$(CRYPTO_SUITE), LEGACY backend)..."
+	-@$(MAKE) -C $(PSK_EDHOC_LIB) clean
+	@$(MAKE) -C $(PSK_EDHOC_LIB) CC="$(CC)" AR="$(AR)" CFLAGS="$(PSK_LEGACY_CFLAGS)" CRYPTO_SUITE=$(CRYPTO_SUITE)
+	@echo "Building PSK responder app (Suite $(CRYPTO_SUITE), legacy)..."
+	@$(MAKE) all TARGET=edhoc_psk_responder EDHOC_LIB_DIR=$(PSK_EDHOC_LIB) \
+		C_SOURCES="src/edhoc_responder_psk.c $(PSK_COMMON_SRC) $(PSK_WOLFCRYPT_SRCS)" \
+		ASM_SOURCES="src/crt0.S" \
+		INCLUDES="$(PSK_INCLUDES) $(PSK_MONO_INC)" EDHOC_MODE=psk \
+		"CFLAGS=$(PSK_LEGACY_CFLAGS)"
 
 # Method 3 includes — wolfSSL only
 M3_INCLUDES = -I. -Iinclude -I$(M3_EDHOC_LIB)/inc

@@ -248,17 +248,19 @@ int main(void) {
         while (1);
     }
     
-    kprintf("EDHOC OK!\r\n");
-    
+    /* Drain UART FIFO before timing burst (each line gets its own drain so
+     * none get dropped). ~200 ms at 50 MHz ≈ 10M cycles per drain. */
+    #define _UART_DRAIN() do { for (volatile uint32_t _s = 0; _s < 10000000; _s++) { (void)_s; } } while (0)
+    _UART_DRAIN();
+    kprintf("EDHOC OK!\r\n"); _UART_DRAIN();
+
     #ifdef TIMING_BREAKDOWN
-    /* Timing results */
-    kprintf("\r\n--- Timing (cycles) ---\r\n");
-    kprintf("Ephemeral keygen: %lu\r\n", (unsigned long)(t_keygen_end - t_keygen_start));
     extern volatile uint32_t _tb_msg1_cyc, _tb_msg3_cyc;
-    kprintf("msg1_gen       : %lu\r\n", (unsigned long)_tb_msg1_cyc);
-    kprintf("msg3_gen       : %lu\r\n", (unsigned long)_tb_msg3_cyc);
-    kprintf("EDHOC total    : %lu\r\n", (unsigned long)(_tb_msg1_cyc + _tb_msg3_cyc));
-    kprintf("Grand total    : %lu\r\n", (unsigned long)((t_keygen_end - t_keygen_start) + _tb_msg1_cyc + _tb_msg3_cyc));
+    kprintf("Ephemeral keygen: %lu\r\n", (unsigned long)(t_keygen_end - t_keygen_start)); _UART_DRAIN();
+    kprintf("msg1_gen       : %lu\r\n", (unsigned long)_tb_msg1_cyc); _UART_DRAIN();
+    kprintf("msg3_gen       : %lu\r\n", (unsigned long)_tb_msg3_cyc); _UART_DRAIN();
+    kprintf("EDHOC total    : %lu\r\n", (unsigned long)(_tb_msg1_cyc + _tb_msg3_cyc)); _UART_DRAIN();
+    kprintf("Grand total    : %lu\r\n", (unsigned long)((t_keygen_end - t_keygen_start) + _tb_msg1_cyc + _tb_msg3_cyc)); _UART_DRAIN();
 #endif
     kprintf("-----------------------\r\n");
 

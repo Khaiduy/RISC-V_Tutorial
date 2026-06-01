@@ -247,16 +247,16 @@ int main(void) {
         while (1);
     }
     
-    kprintf("EDHOC OK!\r\n");
-#ifdef TIMING_BREAKDOWN    
-    kprintf("\r\n--- Timing (cycles) ---\r\n");
-    kprintf("Ephemeral keygen: %lu\r\n", (unsigned long)(t_keygen_end - t_keygen_start));
-
+    #define _UART_DRAIN() do { for (volatile uint32_t _s = 0; _s < 10000000; _s++) { (void)_s; } } while (0)
+    _UART_DRAIN();
+    kprintf("EDHOC OK!\r\n"); _UART_DRAIN();
+#ifdef TIMING_BREAKDOWN
     extern volatile uint32_t _tb_msg2_cyc, _tb_msg3proc_cyc;
-    kprintf("msg2_gen       : %lu\r\n", (unsigned long)_tb_msg2_cyc);
-    kprintf("msg3_process   : %lu\r\n", (unsigned long)_tb_msg3proc_cyc);
-    kprintf("EDHOC total    : %lu\r\n", (unsigned long)(_tb_msg2_cyc + _tb_msg3proc_cyc));
-    kprintf("Grand total    : %lu\r\n", (unsigned long)((t_keygen_end - t_keygen_start) + _tb_msg2_cyc + _tb_msg3proc_cyc));
+    kprintf("Ephemeral keygen: %lu\r\n", (unsigned long)(t_keygen_end - t_keygen_start)); _UART_DRAIN();
+    kprintf("msg2_gen       : %lu\r\n", (unsigned long)_tb_msg2_cyc); _UART_DRAIN();
+    kprintf("msg3_process   : %lu\r\n", (unsigned long)_tb_msg3proc_cyc); _UART_DRAIN();
+    kprintf("EDHOC total    : %lu\r\n", (unsigned long)(_tb_msg2_cyc + _tb_msg3proc_cyc)); _UART_DRAIN();
+    kprintf("Grand total    : %lu\r\n", (unsigned long)((t_keygen_end - t_keygen_start) + _tb_msg2_cyc + _tb_msg3proc_cyc)); _UART_DRAIN();
 #endif
     kprintf("-----------------------\r\n");
 
