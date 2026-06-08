@@ -449,6 +449,20 @@ ascon_kat:
 		EXTRA_INCLUDES="-Iuoscore-uedhoc/externals/ascon-c/crypto_aead/asconaead128/ref -Iuoscore-uedhoc/externals/ascon-c/tests -Iuoscore-uedhoc/inc" \
 		LIBS="-lgcc"
 
+# X448 KAT + cycle benchmark (Monocypher crypto_x448 vs wolfSSL curve448).
+# Links: monocypher.c (our X448) + wolfSSL fe_448.c (curve448 oracle) +
+# wc_port.c (XMEMCPY/ForceZero used by fe_448 misc.c). RFC 7748 vectors inside.
+X448_KAT_INCLUDES = -I. -Iinclude -I$(M3_EDHOC_LIB)/externals/Monocypher/src \
+                    -I$(WOLFSSL_ROOT) -include $(WOLFSSL_ROOT)/user_settings.h
+x448_test:
+	@echo "Building X448 KAT + bench for RV32..."
+	@$(MAKE) all TARGET=x448_test EDHOC_LIB_DIR=$(M3_EDHOC_LIB) \
+		C_SOURCES="src/x448_kat_main.c src/kprintf.c src/libc_stubs.c $(MONOCYPHER_DIR)/monocypher.c $(WOLFCRYPT_DIR)/fe_448.c $(WOLFCRYPT_DIR)/wc_port.c" \
+		ASM_SOURCES="src/crt0.S" \
+		INCLUDES="$(X448_KAT_INCLUDES)" \
+		"CFLAGS=$(CFLAGS) -DWOLFSSL_USER_SETTINGS" \
+		LIBS="-lgcc"
+
 # ============================================================================
 # EDHOC Hardware-Accelerated Targets
 # These use the EDHOC hardware accelerator (edhoc_top) for full protocol
@@ -635,6 +649,77 @@ edhoc_psk_responder_legacy:
 		ASM_SOURCES="src/crt0.S" \
 		INCLUDES="$(PSK_INCLUDES) $(PSK_MONO_INC)" EDHOC_MODE=psk \
 		"CFLAGS=$(PSK_LEGACY_CFLAGS)"
+
+# ============================================================================
+# EDHOC Method 5 IKR (KEM-only auth, ML-KEM-512, draft-pocero-authkem-ikr-03)
+# ============================================================================
+M5_EDHOC_LIB := PQ-EDHOC
+M5_TC_DIR      = $(M5_EDHOC_LIB)/externals/tinycrypt/lib/source
+M5_COMMON_SRC  = src/kprintf.c src/libc_stubs.c src/csprng_stub.c
+M5_COMMON_SRC += src/edhoc_transport.c src/rng_port.c
+M5_COMMON_SRC += $(M5_EDHOC_LIB)/externals/zcbor/src/zcbor_common.c
+M5_COMMON_SRC += $(M5_EDHOC_LIB)/externals/zcbor/src/zcbor_encode.c
+M5_COMMON_SRC += $(M5_EDHOC_LIB)/externals/zcbor/src/zcbor_decode.c
+M5_COMMON_SRC += $(M5_TC_DIR)/aes_encrypt.c $(M5_TC_DIR)/ccm_mode.c
+M5_COMMON_SRC += $(M5_TC_DIR)/sha256.c $(M5_TC_DIR)/hmac.c
+M5_COMMON_SRC += $(M5_TC_DIR)/utils.c
+M5_INCLUDES    = -I. -Iinclude
+M5_INCLUDES   += -I$(M5_EDHOC_LIB)/inc -I$(M5_EDHOC_LIB)/inc/edhoc
+M5_INCLUDES   += -I$(M5_EDHOC_LIB)/inc/common
+M5_INCLUDES   += -I$(M5_EDHOC_LIB)/externals/zcbor/include
+M5_INCLUDES   += -I$(M5_EDHOC_LIB)/externals/PQClean/crypto_kem/kyber512/clean
+M5_INCLUDES   += -I$(M5_EDHOC_LIB)/externals/PQClean/common
+M5_INCLUDES   += -I$(M5_EDHOC_LIB)/externals/tinycrypt/lib/include
+# compact25519 / Monocypher NOT included — Method 5 IKR uses ML-KEM only
+M5_CFLAGS      = $(ARCH_FLAGS) -Os -flto -g0 -ffunction-sections -fdata-sections \
+                 -fno-unwind-tables -fno-asynchronous-unwind-tables \
+                 -nostartfiles -nostdlib -nodefaultlibs -fno-builtin \
+                 -fno-tree-loop-distribute-patterns -Wall -Wextra \
+                 -DMESSAGE_4 -DZCBOR_CANONICAL \
+                 -DEDHOC_IKR_ONLY -DDEBUG_PRINT \
+                 -DKYBER_LEVEL_1 -DPQCLEAN -DTINYCRYPT \
+                 -DEAD_SIZE=0 -DC_I_SIZE=1 -DC_R_SIZE=1 -DSUITES_I_SIZE=1
+
+M5_KYBER_SRC = $(M5_EDHOC_LIB)/externals/PQClean/crypto_kem/kyber512/clean/kem.c \
+               $(M5_EDHOC_LIB)/externals/PQClean/crypto_kem/kyber512/clean/indcpa.c \
+               $(M5_EDHOC_LIB)/externals/PQClean/crypto_kem/kyber512/clean/poly.c \
+               $(M5_EDHOC_LIB)/externals/PQClean/crypto_kem/kyber512/clean/polyvec.c \
+               $(M5_EDHOC_LIB)/externals/PQClean/crypto_kem/kyber512/clean/ntt.c \
+               $(M5_EDHOC_LIB)/externals/PQClean/crypto_kem/kyber512/clean/reduce.c \
+               $(M5_EDHOC_LIB)/externals/PQClean/crypto_kem/kyber512/clean/cbd.c \
+               $(M5_EDHOC_LIB)/externals/PQClean/crypto_kem/kyber512/clean/verify.c \
+               $(M5_EDHOC_LIB)/externals/PQClean/crypto_kem/kyber512/clean/symmetric-shake.c \
+               $(M5_EDHOC_LIB)/externals/PQClean/common/fips202.c
+
+kyber_kat:
+	@echo "Building Kyber/Keccak KAT diagnostic..."
+	@$(MAKE) all TARGET=kyber_kat \
+		C_SOURCES="src/kyber_kat_main.c src/kprintf.c src/libc_stubs.c $(M5_KYBER_SRC)" \
+		ASM_SOURCES="src/crt0.S" \
+		INCLUDES="$(M5_INCLUDES)" EDHOC_MODE=pq \
+		"CFLAGS=$(M5_CFLAGS)"
+
+edhoc_m5_initiator:
+	@echo "Building EDHOC Method 5 IKR Initiator (ML-KEM-512)..."
+	-@$(MAKE) -C $(M5_EDHOC_LIB) clean
+	@$(MAKE) -C $(M5_EDHOC_LIB) CC="$(CC)" AR="$(AR)" CFLAGS="$(M5_CFLAGS)"
+	@echo "Building Method 5 initiator app..."
+	@$(MAKE) all TARGET=edhoc_m5_initiator EDHOC_LIB_DIR=$(M5_EDHOC_LIB) \
+		C_SOURCES="src/edhoc_initiator_m5.c $(M5_COMMON_SRC)" \
+		ASM_SOURCES="src/crt0.S" \
+		INCLUDES="$(M5_INCLUDES)" EDHOC_MODE=pq \
+		"CFLAGS=$(M5_CFLAGS)"
+
+edhoc_m5_responder:
+	@echo "Building EDHOC Method 5 IKR Responder (ML-KEM-512)..."
+	-@$(MAKE) -C $(M5_EDHOC_LIB) clean
+	@$(MAKE) -C $(M5_EDHOC_LIB) CC="$(CC)" AR="$(AR)" CFLAGS="$(M5_CFLAGS)"
+	@echo "Building Method 5 responder app..."
+	@$(MAKE) all TARGET=edhoc_m5_responder EDHOC_LIB_DIR=$(M5_EDHOC_LIB) \
+		C_SOURCES="src/edhoc_responder_m5.c $(M5_COMMON_SRC)" \
+		ASM_SOURCES="src/crt0.S" \
+		INCLUDES="$(M5_INCLUDES)" EDHOC_MODE=pq \
+		"CFLAGS=$(M5_CFLAGS)"
 
 # Method 3 includes — wolfSSL only
 M3_INCLUDES = -I. -Iinclude -I$(M3_EDHOC_LIB)/inc
@@ -976,7 +1061,7 @@ clean:
 	-@$(MAKE) -C $(M3_EDHOC_LIB) clean
 	@echo "Clean complete!"
 
-.PHONY: all clean edhoc_initiator edhoc_responder x25519_test edhoc_hw_initiator edhoc_hw_responder \
+.PHONY: all clean edhoc_initiator edhoc_responder x25519_test x448_test edhoc_hw_initiator edhoc_hw_responder \
         edhoc_m3_initiator_hw edhoc_m3_responder_hw oscore_benchmark_hw \
         edhoc_m0_initiator edhoc_m0_responder edhoc_m1_initiator edhoc_m1_responder \
         edhoc_m2_initiator edhoc_m2_responder edhoc_m3_initiator edhoc_m3_responder \
