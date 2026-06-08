@@ -25,8 +25,8 @@ fi
 INITIATOR_CFG="$SCRIPT_DIR/c232hm_board_initiator.cfg"
 RESPONDER_CFG="$SCRIPT_DIR/c232hm_board_responder.cfg"
 
-INITIATOR_UART="${INITIATOR_UART:-/dev/ttyUSB1}"
-RESPONDER_UART="${RESPONDER_UART:-/dev/ttyUSB2}"
+INITIATOR_UART="${INITIATOR_UART:-/dev/ttyUSB3}"
+RESPONDER_UART="${RESPONDER_UART:-/dev/ttyUSB5}"
 
 INITIATOR_TELNET=4444
 RESPONDER_TELNET=4445
@@ -140,25 +140,13 @@ mkdir -p "$LOG_DIR"
 echo "[2/5] Log directory created: $LOG_DIR"
 # (Notice we removed optimize_uart from here)
 
-# --- 3. Start OpenOCD for both boards ---
-echo "[3/5] Starting OpenOCD instances..."
-openocd -f "$INITIATOR_CFG" &> /tmp/openocd_initiator.log &
-OPENOCD_INIT_PID=$!
-
-openocd -f "$RESPONDER_CFG" &> /tmp/openocd_responder.log &
-OPENOCD_RESP_PID=$!
-
-echo "  Waiting for OpenOCD to connect..."
-sleep 3
-
-if ! kill -0 "$OPENOCD_INIT_PID" 2>/dev/null; then
-    echo "ERROR: Initiator OpenOCD died. Check /tmp/openocd_initiator.log"
-    exit 1
-fi
-if ! kill -0 "$OPENOCD_RESP_PID" 2>/dev/null; then
-    echo "ERROR: Responder OpenOCD died. Check /tmp/openocd_responder.log"
-    exit 1
-fi
+# --- 3. (OpenOCD now started per-board, sequentially, in step 6) ---
+# Running two C232HM OpenOCD instances concurrently makes their background
+# dmstatus polling collide on the shared USB/JTAG path and wedge one debug
+# module (Failed read at 0x11 → dmstatus=0x0), aborting the load. The fix is
+# to NEVER have two OpenOCD live at once: program one board, resume it,
+# shut its OpenOCD down (the core keeps running), then program the next.
+echo "[3/5] (OpenOCD started per-board in load step)"
 
 # --- 4. Start Silent Capture & HOLD PORTS OPEN ---
 echo "[4/5] Starting silent capture (Holding ports open)..."
@@ -177,30 +165,9 @@ sleep 0.5 # Give the 'cat' commands a moment to latch onto the ports
 optimize_uart "$INITIATOR_UART"
 optimize_uart "$RESPONDER_UART"
 
-# --- 5. Halting boards and flushing ---
-halt_board() {
-    local port=$1 label=$2
-    python3 - <<PYEOF
-import socket, time, sys
-try:
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.connect(('127.0.0.1', $port))
-    s.settimeout(2)
-    time.sleep(0.2)
-    s.sendall(b'halt\n')
-    time.sleep(0.2)
-    s.close()
-except Exception as exc:
-    print(f'ERROR: failed to halt {label}: {exc}', file=sys.stderr)
-    sys.exit(1)
-PYEOF
-}
-
-echo "[5/5] Halting boards and flushing stale UART data..."
-halt_board "$INITIATOR_TELNET" "initiator"
-halt_board "$RESPONDER_TELNET" "responder"
-
-# Flush any garbage that accumulated during the open/stty phase
+# --- 5. Flushing stale UART data (per-board halt now done in step 6) ---
+echo "[5/5] Flushing stale UART data..."
+# (Per-board halt now happens inside program_board during the load step.)
 flush_uart_input "$INITIATOR_UART"
 flush_uart_input "$RESPONDER_UART"
 
@@ -245,20 +212,33 @@ commands = [
     # ('reset halt', ...) removed — ndmreset on the current Arty bitstream stalls
     # the core clock, leaving dmstatus=0x0 and breaking subsequent commands.
     # load_image overwrites any stale image; UART FIFOs are flushed externally.
+    # 'poll off' first: with two C232HM adapters live, OpenOCD's background
+    # dmstatus polling on both TAPs collides and wedges one DM (Failed read at
+    # 0x11 → dmstatus=0x0). Disabling poll on this telnet session stops it.
+    ('poll off', 1.0),
     ('halt', 2.0),
     ('reg mstatus 0x0', 1.0),
     ('reg mie 0x0', 1.0),
     ('reg mtvec 0x80000000', 1.0),
     (f'load_image {elf}', 90.0),
     ('resume 0x80000000', 2.0),
+    ('shutdown', 1.0),  # close this OpenOCD; core keeps running, frees adapter
 ]
 
 try:
     results = telnet_cmds('127.0.0.1', port, commands)
-    for cmd, resp in results:
-        if 'Error' in resp or 'error' in resp:
-            print(f'\n  [FAIL] {label} error on {cmd!r}: {resp[:100]}', file=sys.stderr)
-            sys.exit(1)
+    # Success criterion: load_image reports 'bytes written'. Transient
+    # 'dmstatus=0x0' poll noise (two C232HM adapters) is non-fatal as long as
+    # the image actually loads, so don't fail on a bare 'error' substring.
+    loaded = any('bytes written' in resp for cmd, resp in results
+                 if cmd.startswith('load_image'))
+    if not loaded:
+        for cmd, resp in results:
+            if 'Error' in resp or 'error' in resp:
+                print(f'\n  [FAIL] {label} error on {cmd!r}: {resp[:100]}', file=sys.stderr)
+                sys.exit(1)
+        print(f'\n  [FAIL] {label} load_image did not confirm bytes written', file=sys.stderr)
+        sys.exit(1)
     sys.exit(0)
 except Exception as e:
     print(f'\n  [FAIL] {label} connection error: {e}', file=sys.stderr)
@@ -266,11 +246,32 @@ except Exception as e:
 PYEOF
 }
 
+# program_board: start one OpenOCD, load+resume via telnet (the command list
+# ends with 'shutdown' so OpenOCD exits and releases the adapter), then wait
+# for it to fully exit. Only ever one OpenOCD live at a time → no dmstatus
+# poll collision.
+program_board() {
+    local cfg=$1 telnet=$2 elf=$3 label=$4 logf=$5
+    openocd -f "$cfg" &> "$logf" &
+    local pid=$!
+    sleep 4
+    if ! kill -0 "$pid" 2>/dev/null; then
+        echo "ERROR: $label OpenOCD died. Check $logf"; exit 1
+    fi
+    load_via_telnet "$telnet" "$elf" "$label"
+    local rc=$?
+    wait "$pid" 2>/dev/null   # 'shutdown' command makes OpenOCD exit
+    pkill -9 -f "openocd -f $cfg" 2>/dev/null || true
+    return $rc
+}
+
+# Responder first — it boots and blocks waiting for the initiator's message_1,
+# so it must be running before the initiator starts.
 echo "  Loading Responder ELF to Board B..."
-load_via_telnet "$RESPONDER_TELNET" "$RESPONDER_ELF" "Responder"
+program_board "$RESPONDER_CFG" "$RESPONDER_TELNET" "$RESPONDER_ELF" "Responder" /tmp/openocd_responder.log
 sleep 0.5
 echo "  Loading Initiator ELF to Board A..."
-load_via_telnet "$INITIATOR_TELNET" "$INITIATOR_ELF" "Initiator"
+program_board "$INITIATOR_CFG" "$INITIATOR_TELNET" "$INITIATOR_ELF" "Initiator" /tmp/openocd_initiator.log
 
 echo "--------------------------------------------------------"
 echo " Both boards running. Waiting for completion..."

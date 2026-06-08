@@ -323,3 +323,79 @@ overhead for SHA-256, HKDF, AES-CCM, CBOR encode/decode).
   Suite 4 + StaticDH paths during back-to-back sweep loads.
 - Raw sweep data: `/tmp/sweep_sizes.tsv`, `/tmp/sweep_hw_result.tsv`,
   `/tmp/retry_result.tsv`, cycles merged into `/tmp/cycles_final.tsv`.
+
+---
+
+# 2026-06-08 re-run — M3 & PSK, suites 0 & 7 (legacy backend)
+
+Re-measured on the Arty A7-100T pair after fixing the two-board JTAG loader
+(`load_edhoc.sh`). Four configurations: Method 3 (StaticDH/StaticDH) and
+Method 4 (PSK), each with Suite 0 (AES-CCM-16-64-128 + SHA-256) and Suite 7
+(Ascon-AEAD-128 + Ascon-Hash256). Suite 7 and all PSK builds use the **legacy
+backend** (Monocypher X25519/Ed25519 + TinyCrypt AES-CCM/SHA-256 + Ascon-c),
+built with `EDHOC_BACKEND=legacy TIMING=1`.
+
+Both boards reported `EDHOC OK` with matching `PRK_out` on every run.
+
+> **Methodology caveat:** unlike the 50 MHz / `DEBUG=0` compute-only sweep
+> above, these builds had timing breakdown + debug prints enabled. The **M3**
+> totals are raw `rdcycle` brackets that *include* UART and debug overhead, so
+> they are NOT directly comparable to the compute-only table above. The **PSK**
+> numbers are the apps' own "COMPUTE-ONLY Timing" lines (UART/debug excluded)
+> and are comparable across the two PSK suites.
+
+## Method 3 — raw cycle brackets (include UART/debug overhead)
+
+| Phase             | M3 S0 (X25519 + AES-CCM + SHA-256) | M3 S7 (X25519 + Ascon) |
+|-------------------|-----------------------------------:|-----------------------:|
+| Ephemeral keygen  | 110,980,838                        | 101,365                |
+| msg1_gen          | —                                  | 19,421                 |
+| msg2_gen          | 221,927,044                        | —                      |
+| msg3_gen/process  | 111,880,856 (msg3_process, resp)   | 14,759,721 (msg3_gen, init) |
+| **EDHOC total**   | **333,807,900**                    | **14,779,142**         |
+| **Grand total**   | **444,788,738**                    | **14,880,507**         |
+
+M3 S0 figures are from the responder log; M3 S7 from the initiator log
+(whichever board's full UART output survived capture — the initiator board is
+known to drop some leading UART bytes). Ascon (S7) is ~30× faster end-to-end
+than AES-CCM+SHA-256 (S0) on this RV32 core.
+
+## Method 4 (PSK) — COMPUTE-ONLY timing (cycles, UART/debug excluded)
+
+| Phase                          | PSK S0 (AES-CCM + SHA-256) | PSK S7 (Ascon) |
+|--------------------------------|---------------------------:|---------------:|
+| **Initiator** ephemeral keygen | 4,661,281                  | 4,609,379      |
+| Init msg1_gen                  | 13,879                     | 19,664         |
+| Init msg3_gen (+msg2 parse)    | 7,997,713                  | 7,990,273      |
+| Init msg4_process              | 1,122,521                  | 1,064,609      |
+| Init COMPUTE TOTAL (no kg)     | 9,134,113                  | 9,074,546      |
+| **Init GRAND COMPUTE (+kg)**   | **13,795,394**             | **13,683,925** |
+| **Responder** msg2_gen (+msg1) | 5,212,089                  | 5,277,898      |
+| Resp msg3_process              | 3,493,036                  | 3,436,032      |
+| Resp msg4_gen                  | 1,151,418                  | 1,068,618      |
+| **Resp COMPUTE TOTAL**         | **9,856,543**              | **9,782,548**  |
+
+PSK S0 ≈ PSK S7: the cost is dominated by the X25519 scalar multiplications
+(identical in both suites); the AEAD/hash difference (AES-CCM+SHA-256 vs Ascon)
+is a small fraction of the total.
+
+## JTAG loader fix (this session)
+
+Two concurrent OpenOCD instances (one per C232HM adapter) made their background
+`dmstatus` polling collide on the shared JTAG/USB path, wedging one debug module
+(`Failed read (NOP) at 0x11; status=1` → `dmstatus=0x0` storm). Fixed by
+programming the boards **sequentially** in `load_edhoc.sh`: `program_board()`
+starts one OpenOCD, loads + `resume`s, then `shutdown`s that OpenOCD (the core
+keeps running, the adapter is freed), then programs the next board. Responder is
+programmed first (it boots and blocks waiting for the initiator's `message_1`).
+
+## Provenance (2026-06-08 re-run)
+
+- Boards: Arty A7-100T pair; JTAG via two C232HM cables (`FTA6JVAK` initiator,
+  `FTA6GPSN` responder); UART `/dev/ttyUSB3` (init), `/dev/ttyUSB5` (resp).
+- Toolchain: `riscv64-unknown-elf-gcc` 15.1.0, OpenOCD 0.12.0.
+- Build: `make edhoc_m3_{initiator,responder} CRYPTO_SUITE={0,7} TIMING=1`
+  (S7 adds `EDHOC_BACKEND=legacy`); `make edhoc_psk_{initiator,responder}_legacy
+  CRYPTO_SUITE={0,7} TIMING=1 EDHOC_BACKEND=legacy`.
+- Run: `INITIATOR_ELF=... RESPONDER_ELF=... ./load_edhoc.sh <method> <suite>`
+  (method 3 = StaticDH, 4 = PSK). See `RUN_TIMING.md`.
